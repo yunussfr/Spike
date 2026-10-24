@@ -1,0 +1,26 @@
+# Faz 1 bellek testi: rezervuar çıktısından d adım önceki girdiyi doğrusal okuma ile geri çıkar.
+base: base.yaml
+
+experiment:
+  name: memory
+  device: cpu              # B küçük (τ sayısı kadar); CPU yeterli ve deterministik
+
+memory_test:
+  D_in: 5                  # rastgele girdi boyutu, x ~ U(0, 1) bağımsız
+  # ortam adımı. washout + max pencere = 1300; test bölümü ~4500 adım ≈ d=1000'in 4.5 katı.
+  # d=1000 sınırda: daha az bağımsız pencere R²'yi güvenilmez yapar (PHASES.md Faz 1).
+  n_steps: 24000
+  washout: 300             # 3·τ_max / (T·dt): τ=2000 ms için geçici rejim
+  split: [0.6, 0.2, 0.2]   # eğitim / doğrulama / test (zaman sırasıyla)
+  targets: [item, window]  # item: x(t−d) | window: son d adımın ortalaması
+  delays: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]    # item hedefi için gecikmeler
+  windows: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]   # window hedefi için pencere uzunlukları
+  taus: [20.0, 100.0, 500.0, 2000.0]
+  readouts: [f, fv, lin]   # f: yalnızca ateşleme oranı, fv: [f, v], lin: ideal doğrusal referans
+  exit_criterion:          # PHASES.md Faz 1 (window hedefi, fv okuması)
+    min_ratio: 5.0         # ufuk(τ_max) ≥ min_ratio · ufuk(τ_min)
+    long_from: 20          # uzun pencereler: d ≥ 20
+    short_to: 2            # kısa pencereler: d ≤ 2
+  # λ doğrulama setinde seçilir. 2N = 2000 öznitelikte 1e3 üst sınırı yetersiz kalıyordu (negatif R²).
+  ridge_grid: [1.0e-2, 1.0e-1, 1.0, 10.0, 100.0, 1.0e+3, 1.0e+4, 1.0e+5, 1.0e+6]
+  r2_threshold: 0.1        # "hatırlanıyor" sayılmak için test R² alt sınırı

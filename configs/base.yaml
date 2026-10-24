@@ -1,0 +1,59 @@
+# Varsayılan hiperparametreler (ARCHITECTURE.md §2 K4, §7).
+# Diğer config'ler `base: base.yaml` ile bu dosyayı devralır ve yalnızca farkları yazar.
+# Not: PyYAML `1e-4` ve `1.0e3` biçimlerini string okur; bilimsel gösterimde her zaman
+# nokta ve üs işareti kullan: `1.0e-4`, `1.0e+3`. load_config bunu yakalar.
+
+experiment:
+  name: base
+  seed: 0
+  seeds: [0, 1, 2, 3, 4]   # K8: en az 5 seed
+  device: auto             # auto | cpu | cuda
+  log_dir: runs
+  n_steps: 10              # Faz 0 iskelet döngüsünün adım sayısı
+
+time:
+  dt: 1.0                  # ms
+  T: 20                    # bir ortam adımındaki iç adım sayısı
+
+encoder:
+  theta_enc: 0.1           # delta kodlama eşiği
+  level:                   # seviye (termometre) kanalları (ARCHITECTURE.md §3.1)
+    enabled: true          # false → yalnızca delta kanalları (ablation)
+    n_levels: 8            # L: girdi boyutu başına kanal
+    range: [0.0, 1.0]      # [x_alt, x_üst]; gerçek veride yalnızca eğitim verisinden belirlenir
+
+reservoir:
+  N: 1000
+  rho: 0.05                # k-WTA oranı, k = ceil(rho * N)
+  theta_init: 1.0          # θ(τ) kalibrasyonunun başlangıç tahmini
+  c_in: 3                  # nöron başına girdi bağlantısı
+  p_rec: 0.05              # W_rec seyrekliği
+  rho_spec: 0.9            # W_rec spektral yarıçapı
+  rec_gain: 1.0            # γ_rec; Faz 1 ayar seed'inde seçilecek (ARCHITECTURE.md §3.2)
+  tau_spread: 10.0         # S: nöron çarpanları m_i ∈ [1/S, S] log-düzgün; 1.0 → hepsi aynı τ
+  reset: subtract          # subtract: V ← V − θ (yumuşak) | zero: V ← 0
+  calibration:             # θ(τ) tablosu (ARCHITECTURE.md §3.2)
+    tau_grid: [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]   # ms, K4 τ aralığını kapsar
+    target_rate_frac: 0.75     # hedef oran = frac·ρ; k-WTA tavanı ρ olduğu için tam ρ seçilemez
+    washout_tau_multiple: 3.0  # ısınma = 3·τ_max ortam adımı cinsinden (τ=2000 → 300 adım)
+    n_measure: 100             # ısınmadan sonra oranın ölçüldüğü ortam adımı
+    n_iter: 12                 # ikiye bölme adımı
+
+affect:
+  k: 3                     # duygu uzayı boyutu
+
+regulators:
+  enabled: false           # K5: false iken dört değer de varsayılanda sabit
+  defaults:
+    g: 1.0
+    tau: 100.0             # ms
+    eta: 1.0e-2
+    beta: 1.0
+  bounds:
+    g: [0.5, 2.0]
+    tau: [20.0, 2000.0]    # log-ölçekte ölçeklenir
+    eta: [1.0e-4, 1.0e-1]
+    beta: [0.1, 10.0]
+  perturbation:
+    M: 500                 # adım
+    noise_std: 0.01
