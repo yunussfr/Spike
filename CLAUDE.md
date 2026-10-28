@@ -10,11 +10,11 @@ Araştırma sorusu: duygu uzayı ve regülatörler, veri kaydığında (oturumla
 ## Kaynak dokümanlar (önce bunları oku)
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — **değişmez kurallar (K1–K8)**, denklemler, modül arayüzleri, varsayılan hiperparametreler. Kural değişecekse önce bu dosya güncellenir, sonra kod.
-- [PHASES.md](PHASES.md) — Faz 0–6. Bir fazın çıkış kriteri sağlanmadan sonraki faza geçilmez.
+- [docs/PHASES.md](docs/PHASES.md) — Faz 0–6. Bir fazın çıkış kriteri sağlanmadan sonraki faza geçilmez.
 
 ## Mevcut durum
 
-- **Aktif faz: Faz 1 — Projeksiyon bloğu.** Faz 0 tamam. Faz 1 çıkış kriterleri 2026-10-24'te sağlandı (37 test; bellek ufku τ=20/100/500/2000 → 100/200/500/1000, `runs/20261024-131643_memory_seeds0-1-2-3-4`). Faz 2'ye geçiş kullanıcı onayıyla. (Faz bitince bu satırı güncelle.)
+- **Aktif faz: Faz 3 — Karar bloğu ve ilk gerçek görev (başlamadı).** Faz 0–1 tamam. Faz 2 çıkış kriteri 2026-10-28'de sağlandı (46 test; Mackey-Glass tek adım MSE = tekrar tabanının %17.9'u, ridge'e göre fark %6.8, `runs/20261025-230246_chaotic_seeds0-1-2-3-4`). Beyincik varsayılan kuralı normalize LMS (ARCHITECTURE.md §3.3). Faz 3 için NeuroBench primat `.mat` dosyaları indirilmedi. (Faz bitince bu satırı güncelle.)
 - Açık kararlar: ARCHITECTURE.md §3.2 θ(τ) "geçici" durumu ve §7 `γ_rec` değeri (ayarda 1/3/10 arası fark gürültü düzeyinde, config'te 1.0).
 - ARCHITECTURE.md kural değişikliği gerekiyorsa önce kullanıcıya teşhis tablosu getir; dosyayı kullanıcı onayı olmadan değiştirme.
 - θ(τ) kalibrasyonu ~1 dk sürer (CPU). Testlerde `tests/conftest.py`'deki oturum fixture'ı `calibrated_reservoir` kullanılır; kalibrasyon gerekmeyen testlerde `from_config(..., calibrate=False)`.

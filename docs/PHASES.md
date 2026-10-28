@@ -53,7 +53,9 @@ Her faz bir öncekinin üzerine kurulur. Bir fazın **çıkış kriteri** sağla
 
 ---
 
-## Faz 2 — Beyincik bloğu
+## Faz 2 — Beyincik bloğu  ✅ Tamamlandı (2026-10-28)
+
+> Sonuç: normalize LMS kuralı ile MSE = tekrar tabanının %17.9'u, ridge'e göre fark %6.8 (5 seed). Ham delta kuralı ıraksadığı için normalize kural varsayılan oldu (ARCHITECTURE.md §3.3, §11). Ayrıntı: `docs/State.md`.
 
 **Hedef:** Rezervuar temsili üzerinden bir sonraki girdiyi tahmin etmek.
 

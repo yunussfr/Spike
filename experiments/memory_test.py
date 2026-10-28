@@ -36,6 +36,7 @@ from src.encoder import SpikeEncoder
 from src.reservoir import LIFReservoir
 from src.utils.config import apply_overrides, load_config, resolve_device
 from src.utils.logging import RunLogger
+from src.utils.metrics import r2_per_column, ridge_fit
 from src.utils.seeding import set_seed
 
 TARGET_LAGS = {"item": "delays", "window": "windows"}       # hedef → config'teki gecikme listesi
@@ -79,22 +80,6 @@ def collect_states(
         lin[t] = v_lin.cpu()
     rate = r[mt["washout"]:, :, :N].mean(dim=(0, 2))                         # [B]
     return x.cpu(), r, lin, rate, reservoir.theta(taus).tolist()
-
-
-def ridge_fit(X: torch.Tensor, Y: torch.Tensor, lam: float) -> torch.Tensor:
-    """X: [n, F], Y: [n, D] → W: [F+1, D] (son satır bias, bias düzenlenmez)."""
-    Xb = torch.cat([X, torch.ones(len(X), 1, dtype=X.dtype)], dim=1)        # [n, F+1]
-    reg = lam * torch.eye(Xb.shape[1], dtype=X.dtype)
-    reg[-1, -1] = 0.0
-    return torch.linalg.solve(Xb.T @ Xb + reg, Xb.T @ Y)
-
-
-def r2_per_column(X: torch.Tensor, Y: torch.Tensor, W: torch.Tensor) -> torch.Tensor:
-    """Sütun başına R². → [D]"""
-    pred = torch.cat([X, torch.ones(len(X), 1, dtype=X.dtype)], dim=1) @ W  # [n, D]
-    ss_res = ((Y - pred) ** 2).sum(dim=0)
-    ss_tot = ((Y - Y.mean(dim=0)) ** 2).sum(dim=0)
-    return 1.0 - ss_res / ss_tot
 
 
 def make_targets(x: torch.Tensor, target: str, lags: list[int]):

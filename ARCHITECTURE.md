@@ -146,6 +146,16 @@ e(t+1) = x(t+1) − x̂(t+1)
 ΔW_c   = η · e(t+1) · [r(t), a(t)]ᵀ
 ```
 
+**Normalize edilmiş çevrimiçi kural (varsayılan).** Ham delta kuralı (yukarıdaki) `φ = [r, a]` için `‖φ‖² ~ 1e6` olduğundan, `η < ~1e-7` dışında ıraksar (Faz 2). Varsayılan kural, aynı yerel yapıyı korur ama girişi nedensel olarak standartlaştırır ve adımı normalize eder:
+```
+φ̃     = [(φ − μ) / √(σ² + ε), b]          # μ, σ²: her öznitelik için geçmişin üstel ortalaması/varyansı (yalnızca o ana kadarki veriden)
+ΔW_c   = η · e(t+1) · φ̃ᵀ / (ε + ‖φ̃‖²)     # normalize LMS
+```
+- `b = √F` sabit bias girişidir (`bias_scale: auto`); `F`, öznitelik sayısıdır.
+- Hâlâ yereldir (K2): bir ağırlığın değişimi yalnızca kendi girdisine ve e'ye bağlıdır; `μ`, `σ²` gelecekten bilgi taşımaz (K6). Yalnızca `W_c` değişir.
+- Aynı kural karar bloğu için de geçerlidir (Bölüm 3.6), ortak yardımcı kullanılır.
+- Ham kural config'te `cerebellum.rule: plain` ile hâlâ seçilebilir (karşılaştırma için).
+
 ### 3.4 Duygu uzayı
 ```
 z(t) = tanh(W_z · r(t))                     # şekil: [B, k], varsayılan k = 3
@@ -315,4 +325,5 @@ Her deney üç konfigürasyonla koşulur:
 | 2026-10-24 | Nöron başına zaman sabitleri `τ_i = τ · m_i` ve göreli denge katsayısı `c_i` eklendi | Bellek testi: tüm nöronlar aynı τ'yu kullanınca bellek her τ'da ~2 adımda bitiyordu; aynı filtreyi paylaşan nöronlardan gecikmeler ayrıştırılamıyor |
 | 2026-10-24 | Sıfırlama `V ← 0`'dan `V ← V − θ`'ya (yumuşak) geçti | ~%4 ateşleme oranında sıfıra çekme, aktif nöronların belleğini her ~1.4 ortam adımında siliyordu |
 | 2026-10-24 | Rekürrent kazanç `γ_rec` eklendi | Seyrek ikili spike'lar ve θ ≈ 7 ile `W_rec` katkısı eşiğe göre çok küçüktü, nöronlar arası karışım yoktu |
+| 2026-10-28 | Beyincik varsayılan kuralı normalize edilmiş çevrimiçi LMS oldu (§3.3) | Faz 2: ham delta kuralı `‖φ‖² ~ 1e6` ile ıraksadı (5 seed'de NaN); normalize kural MSE'yi "önceki değeri tekrarla"nın %17.9'una indirdi, ridge'e göre fark %6.8 |
 | 2026-10-24 | Kodlayıcı `DeltaEncoder` → `SpikeEncoder`: delta kanallarına seviye (termometre) kanalları eklendi | Delta kodlama x'in seviyesini iletmiyordu; ideal bir hafızayla bile pencere ortalaması geri çıkarılamıyordu (Bölüm 3.1) |

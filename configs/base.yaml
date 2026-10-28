@@ -39,6 +39,12 @@ reservoir:
     n_measure: 100             # ısınmadan sonra oranın ölçüldüğü ortam adımı
     n_iter: 12                 # ikiye bölme adımı
 
+cerebellum:                # ARCHITECTURE.md §3.3
+  rule: normalized         # normalized (varsayılan, ARCHITECTURE.md §3.3) | plain: ham delta kuralı, ıraksar
+  norm_rate: 0.01          # normalized: çevrimiçi ortalama/varyans unutma oranı
+  eps: 1.0e-6
+  bias_scale: auto         # normalized: bias girişi; auto → √F (doğrulama setinde seçildi)
+
 affect:
   k: 3                     # duygu uzayı boyutu
 

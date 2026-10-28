@@ -1,0 +1,26 @@
+# Faz 2: NeuroBench Mackey-Glass, tek adımlık tahmin (beyincik bloğu).
+base: base.yaml
+
+experiment:
+  name: chaotic
+  device: cpu
+
+encoder:
+  level:
+    range: train           # seviye aralığı yalnızca eğitim verisinin [min, max]'ından
+
+data:
+  file: data/mackey_glass/mg_17.npy   # NeuroBench, τ_MG = 17 (indirilen arşivden)
+  start_offset: 0
+  n_train: 750             # NeuroBench: 10 Lyapunov zamanı × 75 nokta
+  n_test: 750
+  val_frac: 0.2            # eğitimin son kısmı: ridge λ seçimi (test kullanılmaz)
+
+chaotic_test:
+  washout: 15              # 3·τ / (T·dt), τ = 100 ms varsayılan; okuma ve öğrenme dışı
+  epochs: 200              # beyincik eğitim dizisi üzerinde kaç tur (sabit, testte ayarlanmaz)
+  rules: [plain, normalized]
+  ridge_grid: [1.0e-2, 1.0e-1, 1.0, 10.0, 100.0, 1.0e+3, 1.0e+4, 1.0e+5, 1.0e+6]
+  exit_criterion:          # PHASES.md Faz 2
+    max_mse_vs_repeat: 0.5     # yerel kural MSE ≤ 0.5 × "önceki değeri tekrarla" MSE
+    max_gap_vs_ridge: 0.2      # (MSE_yerel − MSE_ridge) / MSE_ridge < 0.2

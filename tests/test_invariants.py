@@ -39,6 +39,16 @@ def test_k2_no_autograd_in_src() -> None:
     assert offenders == []
 
 
+def test_k3_k6_cerebellum_interfaces() -> None:
+    """K3: beyincik yalnızca kendi tahmin hatası e ile güncellenir (δ girişi yok).
+    K6: forward yalnızca r(t) ve a(t)'yi alır, gelecekteki girdiye erişimi yok."""
+    import inspect
+
+    from src.cerebellum import Cerebellum
+    assert list(inspect.signature(Cerebellum.update).parameters) == ["self", "e", "eta"]
+    assert list(inspect.signature(Cerebellum.forward).parameters) == ["self", "r", "a"]
+
+
 def test_k4_tau_grid_covers_allowed_range() -> None:
     """θ(τ) tablosu regülatörün izin verdiği τ aralığının tamamını kapsar."""
     lo, hi = CFG["regulators"]["bounds"]["tau"]
