@@ -89,6 +89,7 @@ seviye_j = 1  eğer x_t > b_j,  yoksa 0
 ```
 - Boyut: `L · D_in`. Deterministiktir (gürültü yok); x arttıkça soldan sağa daha çok kanal yanar.
 - `[x_alt, x_üst]` config'ten gelir. Gerçek veri setlerinde bu aralık **yalnızca eğitim verisinden** belirlenir; test verisine bakılmaz.
+- **Kanal başına ölçek** (`range: train_per_channel`): girdi boyutları çok farklı ölçekteyse (ör. sinir kanallarının ateşleme oranları), her boyut eğitim verisindeki değerlerinin yüksek bir yüzdeliğine (config `data.scale_percentile`) bölünür ve aralık `[0, 1]` alınır. Ölçek yine yalnızca eğitim verisinden hesaplanır.
 
 **Toplam çıktı:** `u = [delta, seviye]`, şekil `[B, T, C]`, `C = (2 + L) · D_in`. Her iki grup da ortam adımının T iç adımı boyunca sabit tutulur. `encoder.level.enabled: false` iken yalnızca delta kanalları üretilir (ablation için).
 
@@ -170,6 +171,18 @@ z'nin üç tahmin başı (head) vardır. Her biri z'den bir değer tahmin eder:
 
 `W_z` ve başların ağırlıkları, bu üç tahminin toplam hatasıyla delta kuralıyla güncellenir. Başlardan W_z'ye hata iletimi yalnızca tek bir doğrusal katman üzerinden yapılır (yerel kalır).
 
+**Uygulama ayrıntıları** (`src/affect.py`):
+- `r` girdisi beyincik ve kararla aynı nedensel standartlaştırmadan geçer: `z = tanh(W_z · φ̃(r))`.
+- Başlar doğrusaldır: `[q̂, û, ŝ] = W_h · [z, 1]`. q, u, s'nin ölçekleri çok farklı olduğu için her hedef çevrimiçi (nedensel) standartlaştırılır; başlar standart hedefi tahmin eder.
+- `ε_h` = standart hedef − baş çıktısı. Güncellemeler normalize LMS biçimindedir:
+  ```
+  ΔW_h = η_h · ε_h · [z, 1]ᵀ / (ε + ‖[z, 1]‖²)
+  ΔW_z = η_z · (((W_hᵀ ε_h)[:k] ⊙ (1 − z²)) − λ · a) · φ̃ᵀ / (ε + ‖φ̃‖²),   a = W_z · φ̃
+  ```
+- `λ · a` terimi, ön-aktivasyon üzerindeki `λ/2 · ‖a‖²` cezasının yerel türevidir (`affect.preact_l2`, varsayılan 0,03). Sebep: cezasız z'nin %36–68'i ±1'e doyuyor, `1 − z² ≈ 0` olunca W_z öğrenemiyordu. Ceza doygunluğu %1–3'e indirir (KR-021).
+- `η_z`, `η_h` config'ten gelir (`affect.lr_z`, `affect.lr_head`); η regülatörü yalnızca karar ve beyinciği etkiler (K4).
+- `W_z` kendi seed'li üreteciyle başlatılır; global RNG'ye dokunmaz. Böylece duygu uzayını açmak diğer blokların sonuçlarını değiştirmez.
+
 ### 3.5 Regülatörler
 ```
 ham     = σ(W_r · z(t) + b_r)                # şekil: [4]
@@ -188,6 +201,7 @@ g, η, β = alt + ham · (üst − alt)
 δ(t)  = y(t) − ŷ(t)
 ΔW_a  = η · δ(t) · r(t)ᵀ
 ```
+- Varsayılan kural, beyincikle aynı **normalize çevrimiçi LMS**'dir (Bölüm 3.3): `ŷ = W_a · φ̃(r)`, `ΔW_a = η · δ · φ̃ᵀ / (ε + ‖φ̃‖²)`. Ham kural config'te `decision.rule: plain` ile seçilebilir. Her iki blok aynı yardımcıyı kullanır (`src/utils/online_norm.py`).
 
 ---
 
@@ -325,5 +339,9 @@ Her deney üç konfigürasyonla koşulur:
 | 2026-10-24 | Nöron başına zaman sabitleri `τ_i = τ · m_i` ve göreli denge katsayısı `c_i` eklendi | Bellek testi: tüm nöronlar aynı τ'yu kullanınca bellek her τ'da ~2 adımda bitiyordu; aynı filtreyi paylaşan nöronlardan gecikmeler ayrıştırılamıyor |
 | 2026-10-24 | Sıfırlama `V ← 0`'dan `V ← V − θ`'ya (yumuşak) geçti | ~%4 ateşleme oranında sıfıra çekme, aktif nöronların belleğini her ~1.4 ortam adımında siliyordu |
 | 2026-10-24 | Rekürrent kazanç `γ_rec` eklendi | Seyrek ikili spike'lar ve θ ≈ 7 ile `W_rec` katkısı eşiğe göre çok küçüktü, nöronlar arası karışım yoktu |
+| 2026-10-30 | W_z güncellemesine ön-aktivasyon L2 terimi `− λ·a` eklendi (§3.4, λ = 0,03) | z'nin %36–68'i doymuştu; Loco'da u başı öğrenmiyordu. Ceza ile doygunluk %1–3, üç baş da her iki ayar oturumunda öğreniyor (KR-021) |
+| 2026-10-29 | Duygu uzayı uygulama ayrıntıları (§3.4): standartlaştırılmış girdi ve hedefler, normalize LMS, `W_z` güncelleme formülü | Hedeflerin ölçekleri çok farklı; ham delta kuralı `r` ölçeğinde ıraksar (KR-019) |
+| 2026-10-29 | Karar bloğu da normalize LMS kullanır (§3.6) | Ham kural `‖r‖² ~ 1e6` ile ıraksıyor (Faz 2, KR-011) |
+| 2026-10-29 | Seviye aralığı kanal başına olabilir (§3.1, `train_per_channel`) | Sinir kanallarının ateşleme oranları çok farklı; tek aralıkta sakin kanallar hiç seviye biti yakmıyor (KR-013) |
 | 2026-10-28 | Beyincik varsayılan kuralı normalize edilmiş çevrimiçi LMS oldu (§3.3) | Faz 2: ham delta kuralı `‖φ‖² ~ 1e6` ile ıraksadı (5 seed'de NaN); normalize kural MSE'yi "önceki değeri tekrarla"nın %17.9'una indirdi, ridge'e göre fark %6.8 |
 | 2026-10-24 | Kodlayıcı `DeltaEncoder` → `SpikeEncoder`: delta kanallarına seviye (termometre) kanalları eklendi | Delta kodlama x'in seviyesini iletmiyordu; ideal bir hafızayla bile pencere ortalaması geri çıkarılamıyordu (Bölüm 3.1) |

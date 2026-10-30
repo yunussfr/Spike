@@ -49,6 +49,22 @@ def test_k3_k6_cerebellum_interfaces() -> None:
     assert list(inspect.signature(Cerebellum.forward).parameters) == ["self", "r", "a"]
 
 
+def test_k3_decision_interface() -> None:
+    """K3: karar bloğu yalnızca sonuç hatası δ ile güncellenir (e girişi yok)."""
+    import inspect
+
+    from src.decision import DecisionReadout
+    assert list(inspect.signature(DecisionReadout.update).parameters) == ["self", "delta", "eta"]
+
+
+def test_k3_affect_interface() -> None:
+    """K3: duygu uzayı δ ve e'yi doğrudan almaz; yalnızca onlardan türetilen q, u, s ile güncellenir."""
+    import inspect
+
+    from src.affect import AffectSpace
+    assert list(inspect.signature(AffectSpace.update).parameters) == ["self", "q", "u", "s"]
+
+
 def test_k4_tau_grid_covers_allowed_range() -> None:
     """θ(τ) tablosu regülatörün izin verdiği τ aralığının tamamını kapsar."""
     lo, hi = CFG["regulators"]["bounds"]["tau"]

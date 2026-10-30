@@ -98,14 +98,16 @@ def run_cerebellum(
             break
 
     def predict(learn: bool) -> torch.Tensor:
-        state = (cb.W_c.clone(), cb.mu.clone(), cb.var.clone(), cb.n_seen)
+        state = (cb.W_c.clone(), cb.norm.state() if cb.norm else None)
         preds = []
         for t in test_rows.tolist():
             x_hat = cb(r[t: t + 1], a0)
             preds.append(x_hat)
             if learn:
                 cb.update(x[t + 1: t + 2] - x_hat, eta)
-        cb.W_c, cb.mu, cb.var, cb.n_seen = state
+        cb.W_c = state[0]
+        if cb.norm:
+            cb.norm.load(state[1])
         return torch.cat(preds)                                              # [n_test, 1]
 
     if diverged:

@@ -38,6 +38,7 @@ reservoir:
     washout_tau_multiple: 3.0  # ısınma = 3·τ_max ortam adımı cinsinden (τ=2000 → 300 adım)
     n_measure: 100             # ısınmadan sonra oranın ölçüldüğü ortam adımı
     n_iter: 12                 # ikiye bölme adımı
+    source: uniform            # uniform: x ~ U(x_alt, x_üst) (§3.2) | train: train verisinin başı (deneysel)
 
 cerebellum:                # ARCHITECTURE.md §3.3
   rule: normalized         # normalized (varsayılan, ARCHITECTURE.md §3.3) | plain: ham delta kuralı, ıraksar
@@ -45,8 +46,31 @@ cerebellum:                # ARCHITECTURE.md §3.3
   eps: 1.0e-6
   bias_scale: auto         # normalized: bias girişi; auto → √F (doğrulama setinde seçildi)
 
-affect:
+decision:                  # ARCHITECTURE.md §3.6
+  mode: regression         # regression | discrete (Faz 7)
+  rule: normalized         # beyincikle aynı kural (§3.3)
+  norm_rate: 0.01
+  eps: 1.0e-6
+  bias_scale: auto
+
+agent:                     # ARCHITECTURE.md §6, §8
+  config: B                # A: rezervuar + karar | B: A + beyincik | C: B + duygu + regülatör (Faz 5)
+  freeze_norm_eval: true   # değerlendirmede (öğrenme kapalı) normalizasyon istatistikleri de donar
+
+affect:                    # ARCHITECTURE.md §3.4 (Faz 4)
+  enabled: false           # true: ajan adım 9'u koşar (B üzerine kurulur)
   k: 3                     # duygu uzayı boyutu
+  lr_z: 0.03               # W_z öğrenme hızı, NLMS (η regülatörüne bağlı değil, K4); KR-021
+  lr_head: 0.1             # baş ağırlıkları öğrenme hızı, NLMS
+  norm_rate: 0.01          # r standartlaştırma unutma oranı
+  target_rate: 0.001       # q, u, s hedef standartlaştırma unutma oranı
+  ema_short: 0.1           # s = EMA_kısa(u) − EMA_uzun(u)
+  ema_long: 0.01
+  eps: 1.0e-6
+  bias_scale: auto
+  seed_offset: 1000        # W_z üreteci seed + offset (rezervuar seed'inden ayrı)
+  preact_l2: 0.03          # λ: z ön-aktivasyonu L2 cezası; doygunluk %60 → %3 (KR-021); 0 → yok
+  head_weights: [1.0, 1.0, 1.0]   # q, u, s başlarının W_z'ye dönen hatadaki ağırlığı
 
 regulators:
   enabled: false           # K5: false iken dört değer de varsayılanda sabit

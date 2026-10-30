@@ -1,0 +1,39 @@
+# Faz 3–4: NeuroBench primat motor tahmini (parmak ucu hızı, 2B regresyon).
+base: base.yaml
+
+experiment:
+  name: nhp_motor
+  device: cpu              # B=1 adım adım akışta CPU (1 iş parçacığı) GPU’dan hızlı: 4 vs 10 ms/adım
+  tune_seed: 100           # yalnızca doğrulama ayarı için; rapor seed'lerinden ayrı
+
+encoder:
+  level:
+    range: train_per_channel   # kanal başına ölçek yalnızca train'den (ARCHITECTURE.md §3.1)
+
+data:
+  dir: data/primate
+  cache_dir: data/primate/cache
+  files:                   # NeuroBench sırası; 6 oturum
+    - indy_20170131_02
+    - indy_20160630_01
+    - indy_20160622_01
+    - loco_20170301_05
+    - loco_20170215_02
+    - loco_20170210_03
+  bin_width: 0.02          # s; 20 ms = T·dt (bir ortam adımı)
+  stride: 0.02             # s; örtüşmesiz kutular
+  train_ratio: 0.8         # NeuroBench: segmentlerin %80 train, kalan yarı yarıya val/test
+  biological_delay: 0      # adım; spike → hareket gecikmesi
+  scale_percentile: 99.0   # kanal ölçeği: train'deki sayımların bu yüzdeliği → 1.0
+
+nhp:
+  configs: [A, B, B+Z]
+  washout: 15              # 3·τ / (T·dt), τ = 100 ms; öğrenme ve okuma dışı
+  epochs: 12               # train üzerinde tur sayısı; val: 1→0,33, 3→0,34, 12→0,38, 24→0,38, 48→0,38
+  max_steps: null          # duman koşusu için oturumu kısaltır
+  ridge_grid: [1.0e-1, 1.0, 10.0, 100.0, 1.0e+3, 1.0e+4, 1.0e+5]
+  stage2_device: cpu       # batch'li okuma: oturum başına CPU süreci; GPU Windows'ta adım başına ~3 ms tabanı (KR-022)
+  chunk: 4096              # r diskten bu kadar satırlık parçalarla okunur
+
+decision:
+  norm_rate: 0.0003        # val: 0,01 → 0,28; 0,001 → 0,34; 0,0003 → 0,38 (12 tur)
