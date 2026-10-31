@@ -75,7 +75,9 @@ Her faz bir öncekinin üzerine kurulur. Bir fazın **çıkış kriteri** sağla
 
 ---
 
-## Faz 3 — Karar bloğu ve ilk gerçek görev
+## Faz 3 — Karar bloğu ve ilk gerçek görev  ✅ Tamamlandı (2026-10-31)
+
+> Sonuç: 6 oturum × 5 seed, test R² (A = B): Indy ort. 0,442, Loco ort. 0,365. NeuroBench SNN taban çizgisi 0,593 / 0,568 (protokol birebir aynı değil, KR-018). B − A = 0 (K3 gereği beklenen). K7 ihlali tablolarda ✗ (KR-014). Koşu: `runs/20261030-101907_nhp_motor_full_seeds0-1-2-3-4/table.md`.
 
 **Hedef:** Konfigürasyon A ve B'yi gerçek bir görevde çalıştırmak.
 
@@ -95,7 +97,9 @@ Her faz bir öncekinin üzerine kurulur. Bir fazın **çıkış kriteri** sağla
 
 ---
 
-## Faz 4 — Duygu uzayı (sabit regülatörlerle)
+## Faz 4 — Duygu uzayı (sabit regülatörlerle)  ✅ Tamamlandı (2026-10-31)
+
+> Sonuç: 30/30 (oturum, seed) çiftinde üç başın eğitim hatası ilk turdan son tura düşüyor. z'den iyi/kötü an ayrımı AUC 0,73–0,88 (oturum ortalamaları). B+Z'nin R²'si B ile birebir aynı (`leak_free = True`, 30/30). Grafikler: aynı koşuda `affect_*.png`, sayılar `affect_summary.json`.
 
 **Hedef:** z uzayını öğrenmek ve anlamlı bir yapı oluşup oluşmadığını görmek. Henüz davranışı etkilemiyor.
 

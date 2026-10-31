@@ -14,7 +14,7 @@ Araştırma sorusu: duygu uzayı ve regülatörler, veri kaydığında (oturumla
 
 ## Mevcut durum
 
-- **Aktif faz: Faz 3 — Karar bloğu ve ilk gerçek görev (başlamadı).** Faz 0–1 tamam. Faz 2 çıkış kriteri 2026-10-28'de sağlandı (46 test; Mackey-Glass tek adım MSE = tekrar tabanının %17.9'u, ridge'e göre fark %6.8, `runs/20261025-230246_chaotic_seeds0-1-2-3-4`). Beyincik varsayılan kuralı normalize LMS (ARCHITECTURE.md §3.3). Faz 3 için NeuroBench primat `.mat` dosyaları indirilmedi. (Faz bitince bu satırı güncelle.)
+- **Aktif faz: Faz 5 — Regülatörler (başlamadı; geçiş kullanıcı onayıyla).** Faz 0–4 tamam. Faz 3–4 çıkış kriterleri 2026-10-31'de sağlandı (`runs/20261030-101907_nhp_motor_full_seeds0-1-2-3-4`): primat motor test R² Indy 0,442 / Loco 0,365 (A = B = B+Z, B − A = 0); duygu uzayında üç baş 30/30 öğreniyor, iyi/kötü AUC 0,73–0,88, sızıntı yok. K7 gerçek veride ihlal (KR-014, raporlanıyor). Ayrıntı: `docs/State.md`, kararlar: `docs/Desicion.md`. (Faz bitince bu satırı güncelle.)
 - Açık kararlar: ARCHITECTURE.md §3.2 θ(τ) "geçici" durumu ve §7 `γ_rec` değeri (ayarda 1/3/10 arası fark gürültü düzeyinde, config'te 1.0).
 - ARCHITECTURE.md kural değişikliği gerekiyorsa önce kullanıcıya teşhis tablosu getir; dosyayı kullanıcı onayı olmadan değiştirme.
 - θ(τ) kalibrasyonu ~1 dk sürer (CPU). Testlerde `tests/conftest.py`'deki oturum fixture'ı `calibrated_reservoir` kullanılır; kalibrasyon gerekmeyen testlerde `from_config(..., calibrate=False)`.

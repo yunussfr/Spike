@@ -2,8 +2,56 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Faz 3 ve Faz 4 kodu yazıldı, ayarın çoğu bitti; tam koşular (6 oturum × 5 seed) henüz yapılmadı. Ayrıntı ve kalan işler: 2026-10-29 girişi → "Teknik borç".
+**Şu an:** Faz 3 ve Faz 4 tamamlandı (2026-10-31). Faz 5'e (regülatörler) geçiş kullanıcı onayıyla. Kapanış dokümanları commit bekliyor.
 **Açık kararlar:** θ(τ) tablosu hâlâ "geçici"; `γ_rec` = 1.0 (1/3/10 arası fark gürültü düzeyinde).
+
+---
+
+## 2026-10-31
+
+**Yaptıklarım**
+- [x] Tam koşu bitti: `runs/20261030-101907_nhp_motor_full_seeds0-1-2-3-4`. 6 oturum × 5 seed × {A, B, B+Z}, 30/30 hücre dolu, NaN yok.
+  - Süre: aşama 1 ≈ 8,5 saat; aşama 2 oturum başına ~19–20 saat (duvar saati). Bunun ~7,5 saati gece uykusu, bir kısmı da pilde yavaşlama. Uyanık ve fişe takılıyken tahmini ~10 saat.
+- [x] `scripts/make_tables.py` → `table.md`; `experiments/affect_viz.py` → `affect_*.png` (oturum başına, seed 0) ve `affect_summary.json` (30 satır).
+
+**Faz 3 sonucu** (test R², 5 seed ortalama ± std; A = B = B+Z)
+
+| Oturum | Yerel kural | Ridge (üst sınır) |
+|---|---|---|
+| indy_20170131_02 | 0,446 ± 0,018 | 0,500 |
+| indy_20160630_01 | 0,352 ± 0,009 | 0,368 |
+| indy_20160622_01 | 0,529 ± 0,010 | 0,553 |
+| loco_20170301_05 | 0,399 ± 0,014 | 0,355 |
+| loco_20170215_02 | 0,344 ± 0,009 | 0,378 |
+| loco_20170210_03 | 0,352 ± 0,007 | 0,319 |
+
+- Maymun ortalaması: Indy 0,442 (NeuroBench SNN 0,593), Loco 0,365 (SNN 0,568). Taban çizgisinin ~0,15–0,20 altındayız (protokol farkı: 20 ms adım, 80/10/10 bölme, KR-018).
+- **B − A = 0** her hücrede (K3: beyincik bu fazda kararı etkilemiyor). Beklenen sonuç.
+- Yerel kural ridge'e çok yakın: Indy'de 0,02–0,05 geride, iki Loco oturumunda ridge'den **iyi**. Ayar seed'indeki ~0,14'lük fark (KR-020) rapor seed'lerinde büyük ölçüde kapanmış. Ridge'in λ'sı val'de seçiliyor; oturum içi kaymada çevrimiçi kural avantajlı olabilir (yorum, test edilmedi).
+- K7: ateşleme oranı %1,1–1,6, tüm oturumlarda ✗ (KR-014, kural değişmedi).
+
+**Faz 4 sonucu** (oturum ortalaması, 5 seed)
+
+| Oturum | AUC iyi/kötü (z) | q baş MSE (ilk → son tur) | u | s |
+|---|---|---|---|---|
+| indy_20160622_01 | 0,788 ± 0,025 | 0,65 → 0,43 | 0,55 → 0,47 | 0,18 → 0,06 |
+| indy_20160630_01 | 0,883 ± 0,015 | 0,63 → 0,48 | 0,73 → 0,67 | 0,25 → 0,11 |
+| indy_20170131_02 | 0,753 ± 0,030 | 0,77 → 0,52 | 0,62 → 0,56 | 0,23 → 0,12 |
+| loco_20170210_03 | 0,773 ± 0,026 | 0,56 → 0,42 | 0,72 → 0,67 | 0,28 → 0,11 |
+| loco_20170215_02 | 0,752 ± 0,009 | 0,61 → 0,49 | 0,82 → 0,80 | 0,33 → 0,15 |
+| loco_20170301_05 | 0,731 ± 0,032 | 0,70 → 0,53 | 0,80 → 0,78 | 0,34 → 0,17 |
+
+- Çıkış kriterleri: (1) üç baş 30/30'da düşüyor ✓; (2) iyi/kötü ayrışıyor ✓ (AUC 0,73–0,88; 3B grafiklerde iyi anlar z'nin bir köşesinde toplanıyor); (3) `leak_free = True` ve `r2_B+Z == r2_B`, 30/30 ✓.
+- **Dikkat:** başların val/test (donuk) MSE'si çoğu oturumda ≥ 1 (q: 0,7–2,0). Eğitimde öğrenilen baş ölçekleri test dağılımına tam taşınmıyor: donuk karar bloğunda δ büyüyor, hedef standartlaştırması da donuk. AUC sıralamaya baktığı için bundan etkilenmiyor ama Faz 5'te regülatörler bu başları okuyacak. Ele alınmalı.
+- Loco'da u başı hâlâ zayıf (0,82 → 0,80), KR-021'deki açık konu sürüyor.
+
+### Teknik borç (Faz 5 öncesi)
+1. Commit: kod `16e50ce`'de commit'li; bu kapanış doküman değişiklikleri henüz commit edilmedi.
+2. `runs/.../r/*.npy` ~17 GB disk tutuyor; tablolar çıktı, silinebilir (kullanıcı onayıyla).
+3. AUC kontrolleri: eğitilmemiş z (`lr_z = 0`) ve |y| büyüklüğünden AUC. z'nin gerçekten öğrenilmiş bir yapı taşıdığını gösterir.
+4. Baş ölçeklerinin değerlendirmede taşınmaması (yukarıdaki not).
+5. Hız: tüm oturum × seed ajanlarını (30) tek GPU batch'inde koşmak ve/veya Colab (Linux, düşük çekirdek başlatma yükü) üzerinde hız testi. Faz 5–6'dan önce. Uzun koşularda fişe takılı ve uyku kapalı olmalı.
+6. KR-016 Faz 5'te geçersiz: regülatörler açılınca r öğrenmeye bağlı olur, iki aşamalı akış yeniden tasarlanmalı.
 
 ---
 
@@ -53,6 +101,10 @@ Her gün sonunda güncellenir. En yeni gün en üstte.
 3. ~~KR-019 kaydı~~ yazıldı.
 
 **Faz 3 tam koşu**
+- **2026-10-30:** Batch'li okuma blokları (`src/batched.py`, KR-022) ve iki aşamalı tam koşu script'i (`experiments/nhp_full.py`) yazıldı.
+  - Eşdeğerlik testi geçti, duman koşusu temiz.
+  - Tam koşu başlatıldı: `uv run python experiments/nhp_full.py --config configs/nhp_motor.yaml --workers1 5 --workers2 6 --threads2 2`.
+  - Yarıda kalırsa `--run runs/<klasör>` ile sürdürülür; biten işler atlanır.
 4. `uv run python experiments/nhp_motor.py --config configs/nhp_motor.yaml --set "nhp.configs=[A, B, B+Z]" --workers 8`
    - 6 oturum × 5 seed; tahmini süre ~1–2 saat; RAM: büyük oturumda süreç başına ~3 GB.
    - Kontrol: tüm hücreler dolu, `leak_free: true`, NaN yok.

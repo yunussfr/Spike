@@ -162,3 +162,25 @@ Her kayıt:
   | 0,1 | 0,3 | 1 | 0,686 / 0,526 | %0 / %0 | ✓ / ✓ |
 - **Karar:** `affect.lr_z: 0.03`, `affect.preact_l2: 0.03`, `head_weights: [1, 1, 1]`. Üç baş iki oturumda da öğreniyor, doygunluk ~%2, AUC 0,81 (`lr_z = 0,01` yedeğine göre +0,05). ARCHITECTURE.md §3.4 ve §11 güncellendi.
 - **Açık:** Loco'da u başı zayıf kalıyor (MSE 0,81 → 0,80; ortalama tahmini ≈ 1). u hedefi, beyincik öğrendikçe kayıyor olabilir. u ağırlığı 3 bunu belirgin düzeltmedi. Faz 5'te belirsizlik regülatörü için not.
+
+---
+
+## Altyapı
+
+### KR-022 — Batch'li okuma blokları; tam koşu iki aşamalı, oturum başına CPU süreci
+- **Bağlam:** Tam koşu (6 oturum × 5 seed × {A, B, B+Z}, 12 tur) tekil ajanlarla CPU'da ~6–9 saat sürecekti. Asıl yük rezervuar değil, okuma bloklarıydı: tekil B+Z ajanında adım başına ~4,6 ms, çoğu Python/çekirdek çağrısı maliyeti. Kullanıcı "önce GPU batch" seçeneğini seçti.
+- **Karar:**
+  - `src/batched.py` (`BatchedAgent`): M bağımsız ajanın (5 seed) okuma blokları tek tensörde `[M, …]` yürütülür. Matematik tekil `Agent` ile aynıdır; tekil ajanlardan kurulur, böylece başlangıç ağırlıkları birebir kopyalanır. `tests/test_batched.py` A, B, B+Z için eşdeğerliği doğrular.
+  - `experiments/nhp_full.py` iki aşamalıdır:
+    - Aşama 1 (CPU, paralel): r üretilir ve diske yazılır (float32 `.npy`, ~17 GB); oran ve ridge hesaplanır.
+    - Aşama 2: oturum başına bir süreç, r bellek eşlemesiyle parça parça okunur.
+- **Ölçüm** (5 ajan birlikte, adım başına):
+
+  | | CPU 1 iş parçacığı | GPU (RTX 4060 Laptop) |
+  |---|---|---|
+  | A | 0,21 ms | 0,60 ms |
+  | B+Z | 3,71 ms | 2,91 ms |
+  | B+Z, 15 ajan | 11,6 ms | 3,05 ms |
+- **Sonuç:** Batch'leme ajan başına maliyeti ~6× düşürdü (4,6 → 0,74 ms). GPU, Windows'ta çekirdek başlatma yükü yüzünden adım başına ~3 ms'nin altına inmiyor; tüm işi tek GPU sürecine yığmak ~6–7 saat sürerdi. Oturum başına paralel CPU süreçleri en hızlısı (`nhp.stage2_device: cpu`, değiştirilebilir). GPU'nun kazanması için M'nin çok büyük olması gerekir (ör. Faz 6'da çok sayıda ablation/seed tek batch'te) ya da CUDA Graphs.
+- **Doğrulama:** Duman koşusu (`indy_20170131_02`, 2 seed, 1 tur): `leak_free = True`, `K3 (A = B) = True`; aşama 2 1,3 dakika.
+- **Gerçekleşen (2026-10-31):** Tam koşu sorunsuz bitti (30/30). Ama duvar saati beklenenden uzun sürdü: aşama 2 ~19–20 saat. Sebepler: ~7,5 saat gece uykusu, pilde çalışırken yavaşlama, 6 süreç × 2 iş parçacığının çekirdekleri paylaşması. Ders: uzun koşularda fişe takılı + uyku kapalı. Faz 5–6 öncesi 30 ajanı tek GPU batch'inde (veya Linux/Colab'da) koşmak ölçülmeli.

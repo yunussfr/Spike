@@ -92,3 +92,45 @@ $R^2 = 1 - \dfrac{\sum (y - \hat y)^2}{\sum (y - \bar y)^2}$. Tahmin her zaman o
 - **ortalama tabanı:** train ortalamasını tahmin etmek (≈ 0),
 - **ridge üst sınırı:** aynı $r$ üzerinde en iyi doğrusal okuma,
 - **NeuroBench SNN taban çizgisi:** makalede Indy 0,593, Loco 0,568 (arXiv 2304.04640, Tablo 4).
+
+# Faz 3 Sonucu Ne Söylüyor?
+
+6 oturum × 5 seed sonunda yerel kuralla test R²'si Indy'de ortalama 0,442, Loco'da 0,365 çıktı. Üç şey öğrendik:
+- **Sistem çalışıyor.** Ortalama tabanı 0, biz 0,34–0,53 arasındayız. Sabit, eğitilmeyen bir rezervuar ve geri yayılımsız tek bir yerel kural maymunun parmak hızını anlamlı ölçüde tahmin edebiliyor.
+- **Yerel kural, ridge'in sınırına neredeyse ulaştı.** Ridge, aynı $r$ üzerinde tüm veriyi görüp tek hamlede çözülen en iyi doğrusal okumadır. Bizim kural adım adım ilerlemesine rağmen Indy'de 0,02–0,05 geride kaldı, iki Loco oturumunda ise ridge'i geçti. Yani darboğaz artık öğrenme kuralı değil, **rezervuarın taşıdığı bilgi**. Daha iyi R² için temsilin kendisi iyileşmeli: daha çok nöron, K7'nin hedeflediği ateşleme oranı ya da daha uygun τ.
+- **NeuroBench'in SNN taban çizgisinin ~0,15–0,20 altındayız.** Onlar geri yayılımla eğitilmiş ağlar kullanıyor ve 4 ms adımla çalışıyor; protokol de birebir aynı değil (KR-018). Projenin amacı bu sayıyı geçmek değil, aynı sistemin kayma altında duygu uzayıyla daha iyi uyum sağlayıp sağlamadığını görmek. Bu yüzden taban çizgisi bir referans olarak duruyor.
+
+**B − A = 0** her hücrede. Bu bir hata değil: beyincik bu fazda karar bloğuna dokunmuyor (K3), yani A ve B aynı tahmini üretmek zorunda. Beyincik ancak Faz 5'te, belirsizlik sinyali $u$ regülatörlere gidince davranışı etkileyebilecek.
+
+# Duygu Uzayı (Faz 4)
+
+Duygu uzayı, rezervuarın o anki durumunu 3 sayıya sıkıştıran küçük bir katmandır:
+$$z = \tanh(W_z \cdot \tilde\varphi(r)), \qquad z \in (-1, 1)^3$$
+Bu üç sayı bir "ruh hali" koordinatı gibi düşünülebilir. z'nin neyi temsil edeceğini biz söylemiyoruz; üç tahmin başı onu dolaylı yoldan şekillendiriyor.
+
+**Üç baş: z'den neyi tahmin etmeye çalışıyoruz?**
+
+| Baş | Hedef | Anlamı |
+|---|---|---|
+| $\hat q$ | $q = -\|\delta\|^2$ | **Performans:** şu an ne kadar iyi gidiyorum? (hata küçükse q yüksek) |
+| $\hat u$ | $u = \|e\|^2$ | **Belirsizlik:** dünya beklediğimden ne kadar farklı? (beyinciğin şaşkınlığı) |
+| $\hat s$ | $s = \text{EMA}_{kısa}(u) - \text{EMA}_{uzun}(u)$ | **Eğilim:** şaşkınlığım son zamanlarda artıyor mu, azalıyor mu? |
+
+Her baş z'den doğrusal bir tahmin yapar: $[\hat q, \hat u, \hat s] = W_h \cdot [z, 1]$. Başlar iyi tahmin edebiliyorsa, z bu üç bilgiyi taşıyor demektir.
+
+**Hedefler neden standartlaştırılıyor?** $u$ yüzlerce birim, $s$ ise ±birkaç birim olabilir. Ölçekler bu kadar farklıyken başlardan biri öğrenmeye hâkim olur. Bu yüzden her hedef çevrimiçi olarak ortalama 0, varyans 1'e çekilir. Başın hatası 1 civarındaysa "ortalamayı tahmin etmekten iyi değil", 0'a yaklaştıkça "iyi tahmin ediyor" demektir.
+
+**W_z nasıl öğreniyor (geri yayılım olmadan)?** Başların hatası $\varepsilon_h$ tek bir doğrusal katmandan geri dağıtılır ve açık bir formülle yazılır:
+$$\Delta W_z = \eta_z \cdot \Big[(W_h^\top \varepsilon_h)_{[:k]} \odot (1 - z^2) - \lambda\, a\Big] \cdot \frac{\tilde\varphi^\top}{\epsilon + \|\tilde\varphi\|^2}$$
+- $(1 - z^2)$: tanh'ın eğimi. z ±1'e yapışırsa bu terim 0 olur ve W_z öğrenemez (doygunluk).
+- $-\lambda a$: z'nin ham değerine ($a = W_z \tilde\varphi$) küçük bir ceza. z'yi doygunluktan uzak tutar. Ayarda doygunluğu %60'tan %2'ye indirdi (KR-021).
+- Sağdaki kesir, diğer bloklardaki normalize LMS ile aynıdır.
+
+**K3 neden önemli?** Duygu uzayı δ ve e'yi yalnızca **okur**; karar bloğunu ya da beyinciği hiçbir şekilde eğitmez. Kendi rastgele sayı üretecini de kullanır. Sonuç olarak duygu uzayını açmak görev çıktısını bit düzeyinde değiştirmez. Bunu "sızıntı testi" ile kontrol ediyoruz: B ve B+Z'nin R²'si 30/30 hücrede birebir aynı.
+
+**Sonuç ne gösteriyor?**
+- **Üç baş da öğreniyor.** 30/30 çiftte hata ilk turdan son tura düşüyor. En belirgin düşüş eğilim başında (s: ~0,28 → ~0,12), en zayıfı belirsizlik başında (u, özellikle Loco'da 0,82 → 0,80).
+- **İyi ve kötü anlar z'de ayrışıyor.** Performansın en iyi çeyreğindeki anlar ile en kötü çeyreğindekiler z'den AUC 0,73–0,88 ile ayırt ediliyor. AUC 0,5 yazı-tura, 1 kusursuz ayrım demektir. 3B grafiklerde iyi anların z'nin bir köşesinde toplandığı görülüyor.
+- **Ama dikkat:** başlar eğitimde öğrendikleri ölçeği test bölümüne tam taşıyamıyor (test MSE'si çoğu oturumda ≥ 1). Sıralama korunuyor, bu yüzden AUC iyi; ölçek ise kayıyor. Faz 5'te regülatörler bu başları okuyacağı için bu not önemli.
+
+**Bu sonuç neyi göstermiyor?** z'nin uyuma yardım edip etmediğini. Şu an z sadece "izleyen" bir katman, hiçbir şeyi değiştirmiyor. Asıl soru, z regülatörler üzerinden g, τ, η ve β'yı ayarlamaya başladığında (Faz 5) ve veri oturumdan oturuma kaydığında (Faz 6) cevaplanacak.
