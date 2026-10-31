@@ -47,8 +47,23 @@ Her gün sonunda güncellenir. En yeni gün en üstte.
 
 ### Teknik borç (Faz 5 öncesi)
 1. Commit: kod `16e50ce`'de commit'li; bu kapanış doküman değişiklikleri henüz commit edilmedi.
-2. `runs/.../r/*.npy` ~17 GB disk tutuyor; tablolar çıktı, silinebilir (kullanıcı onayıyla).
-3. AUC kontrolleri: eğitilmemiş z (`lr_z = 0`) ve |y| büyüklüğünden AUC. z'nin gerçekten öğrenilmiş bir yapı taşıdığını gösterir.
+2. ~~`runs/.../r/*.npy` (~17 GB)~~ kontroller bittikten sonra kullanıcı onayıyla silindi (2026-10-31). Gerekirse aşama 1 ile yeniden üretilir.
+3. ~~AUC kontrolleri~~ **Tamamlandı** (`experiments/affect_controls.py` → `affect_controls.json`). Aynı ölçüt (train'de q'ya doğrusal okuma, eval'de iyi/kötü AUC), 5 seed:
+
+   | Oturum | Eğitilmiş z | Eğitilmemiş z | Yalnızca hız \|y\| | Tüm r (2000 boyut, tavan) |
+   |---|---|---|---|---|
+   | indy_20170131_02 | 0,753 ± 0,027 | 0,587 ± 0,033 | 0,698 ± 0,011 | 0,807 ± 0,010 |
+   | indy_20160630_01 | 0,883 ± 0,013 | 0,607 ± 0,060 | 0,697 ± 0,005 | 0,923 ± 0,006 |
+   | indy_20160622_01 | 0,788 ± 0,022 | 0,624 ± 0,027 | 0,635 ± 0,010 | 0,816 ± 0,017 |
+   | loco_20170301_05 | 0,731 ± 0,029 | 0,558 ± 0,061 | 0,545 ± 0,014 | 0,778 ± 0,009 |
+   | loco_20170215_02 | 0,752 ± 0,008 | 0,568 ± 0,041 | 0,644 ± 0,010 | 0,754 ± 0,010 |
+   | loco_20170210_03 | 0,773 ± 0,023 | 0,575 ± 0,053 | 0,470 ± 0,019 | 0,771 ± 0,011 |
+
+   - **Öğrenme gerçek:** eğitilmiş z, eğitilmemiş z'den her oturumda ~0,15–0,28 yüksek (ort. 0,78 vs 0,59).
+   - **z sadece hız değil:** 6 oturumun 6'sında z, hızdan daha iyi ayırıyor. Fark en az `indy_20170131_02`'de (0,75 vs 0,70); bu oturumda kötü anların önemli kısmı hızlı hareketlerle örtüşüyor.
+   - **3 boyut neredeyse yetiyor:** z, 2000 boyutlu r'nin tavanının %93–100'üne ulaşıyor.
+   - "z + hız" birleşik okuması da hesaplandı. Ancak Loco'da hız özelliğinin train → test ölçeği kaydığı için bozuluyor (ör. 0,54), bu sütun yorum için güvenilir değil (json'da duruyor).
+   - Eğitilmemiş z standartlaştırıcıyı iki geçişle yeniden yürütür (EMA sabit oranlı, ayrıntı script başında). Eğitilmiş z sütunu `affect_viz` AUC'siyle birebir aynı (çapraz kontrol).
 4. Baş ölçeklerinin değerlendirmede taşınmaması (yukarıdaki not).
 5. Hız: tüm oturum × seed ajanlarını (30) tek GPU batch'inde koşmak ve/veya Colab (Linux, düşük çekirdek başlatma yükü) üzerinde hız testi. Faz 5–6'dan önce. Uzun koşularda fişe takılı ve uyku kapalı olmalı.
 6. KR-016 Faz 5'te geçersiz: regülatörler açılınca r öğrenmeye bağlı olur, iki aşamalı akış yeniden tasarlanmalı.

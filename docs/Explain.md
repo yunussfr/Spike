@@ -133,4 +133,9 @@ $$\Delta W_z = \eta_z \cdot \Big[(W_h^\top \varepsilon_h)_{[:k]} \odot (1 - z^2)
 - **İyi ve kötü anlar z'de ayrışıyor.** Performansın en iyi çeyreğindeki anlar ile en kötü çeyreğindekiler z'den AUC 0,73–0,88 ile ayırt ediliyor. AUC 0,5 yazı-tura, 1 kusursuz ayrım demektir. 3B grafiklerde iyi anların z'nin bir köşesinde toplandığı görülüyor.
 - **Ama dikkat:** başlar eğitimde öğrendikleri ölçeği test bölümüne tam taşıyamıyor (test MSE'si çoğu oturumda ≥ 1). Sıralama korunuyor, bu yüzden AUC iyi; ölçek ise kayıyor. Faz 5'te regülatörler bu başları okuyacağı için bu not önemli.
 
+**Kontrol: bu ayrım gerçekten öğrenmeden mi geliyor?** "İyi/kötü" etiketi q'dan, yani sistemin kendi hatasından geliyor ve z de q'yu tahmin etmek için eğitiliyor. Bu yüzden z'nin q'yu ayırması kısmen beklenen bir şey. Bunu iki karşılaştırmayla sınadık (`experiments/affect_controls.py`):
+- **Öğrenmemiş z** (W_z rastgele başlangıcında): AUC ~0,59. Eğitilmiş z ~0,78. Yani z'nin yapısı rezervuarda kendiliğinden hazır değil, öğrenmeyle oluşuyor.
+- **Sadece el hızı |y|:** AUC 0,47–0,70. z her oturumda hızdan daha iyi. Yani z "hızlı hareket ediyorum" bilgisinden fazlasını, "şu an zorlanıyorum" bilgisini taşıyor.
+- **Tavan:** rezervuarın tüm 2000 boyutunu kullanan en iyi doğrusal okuma ~0,81. z bu bilginin %93–100'ünü sadece **3 sayıya** sıkıştırabiliyor.
+
 **Bu sonuç neyi göstermiyor?** z'nin uyuma yardım edip etmediğini. Şu an z sadece "izleyen" bir katman, hiçbir şeyi değiştirmiyor. Asıl soru, z regülatörler üzerinden g, τ, η ve β'yı ayarlamaya başladığında (Faz 5) ve veri oturumdan oturuma kaydığında (Faz 6) cevaplanacak.
