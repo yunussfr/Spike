@@ -8,6 +8,9 @@ okunur. Öğrenilmez, regülatörler doğrudan değiştiremez.
 
 Nöron i'nin zaman sabiti τ_i = τ · m_i; m_i sabit seed ile bir kez üretilir (K1),
 geometrik ortalaması 1'dir. Regülatör yalnızca ortak τ'yu verir.
+
+Okuma vektörü r = [f, κ(τ)·V]; κ(τ) = (τ_ref/τ)^p varyans koruyucu kazançtır (§3.2, KR-030).
+Yalnızca okumaya uygulanır: dinamik, spike'lar ve θ(τ) değişmez. p = 0 → κ = 1.
 """
 
 import math
@@ -54,6 +57,8 @@ class LIFReservoir(nn.Module):
         tau_spread: float,
         reset: str,
         seed: int,
+        v_gain_exp: float = 0.0,
+        tau_ref: float = 100.0,
     ) -> None:
         super().__init__()
         if c_in > n_in:
@@ -67,6 +72,8 @@ class LIFReservoir(nn.Module):
         self.rho = rho
         self.rec_gain = rec_gain
         self.reset = reset
+        self.v_gain_exp = v_gain_exp
+        self.tau_ref = tau_ref
         self.k = math.ceil(round(rho * N, 9))   # yuvarlama: 0.07*100 = 7.000000000000001 → 7
 
         gen = torch.Generator().manual_seed(seed)
@@ -93,6 +100,7 @@ class LIFReservoir(nn.Module):
             theta_init=r["theta_init"], tau_grid=r["calibration"]["tau_grid"], c_in=r["c_in"],
             p_rec=r["p_rec"], rho_spec=r["rho_spec"], rec_gain=r["rec_gain"],
             tau_spread=r["tau_spread"], reset=r["reset"], seed=seed,
+            v_gain_exp=r["v_gain_exp"], tau_ref=cfg["regulators"]["defaults"]["tau"],
         )
         if calibrate:
             res.calibrate_from_config(cfg, D_in, seed)
@@ -259,4 +267,5 @@ class LIFReservoir(nn.Module):
         g_col = _as_column(g, B, u)                                         # [B, 1]
         tau_col = _as_column(tau, B, u)                                     # [B, 1]
         f = self._integrate(u, g_col, tau_col, self.theta(tau_col))         # [B, N]
-        return torch.cat([f, self.V], dim=-1)                               # [B, 2N]
+        v = self.V if self.v_gain_exp == 0 else self.V * (self.tau_ref / tau_col) ** self.v_gain_exp   # [B, N]
+        return torch.cat([f, v], dim=-1)                                    # [B, 2N]

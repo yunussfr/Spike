@@ -32,6 +32,7 @@ reservoir:
   rec_gain: 1.0            # γ_rec; Faz 1 ayar seed'inde seçilecek (ARCHITECTURE.md §3.2)
   tau_spread: 10.0         # S: nöron çarpanları m_i ∈ [1/S, S] log-düzgün; 1.0 → hepsi aynı τ
   reset: subtract          # subtract: V ← V − θ (yumuşak) | zero: V ← 0
+  v_gain_exp: 0.5          # p: okuma vektöründe v = (τ_ref/τ)^p · V, varyans koruyucu (§3.2, KR-030); 0 → kapalı
   calibration:             # θ(τ) tablosu (ARCHITECTURE.md §3.2)
     tau_grid: [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]   # ms, K4 τ aralığını kapsar
     target_rate_frac: 0.75     # hedef oran = frac·ρ; k-WTA tavanı ρ olduğu için tam ρ seçilemez
@@ -55,7 +56,8 @@ decision:                  # ARCHITECTURE.md §3.6
 
 agent:                     # ARCHITECTURE.md §6, §8
   config: B                # A: rezervuar + karar | B: A + beyincik | C: B + duygu + regülatör (Faz 5)
-  freeze_norm_eval: true   # değerlendirmede (öğrenme kapalı) normalizasyon istatistikleri de donar
+  freeze_norm_eval: false  # false: değerlendirmede girdi normu nedensel EMA ile güncellenir, ağırlıklar donuk (§8, KR-030)
+                           # true: norm da donar (Faz 3–4 sonuçları bu ayarla, KR-017)
 
 affect:                    # ARCHITECTURE.md §3.4 (Faz 4)
   enabled: false           # true: ajan adım 9'u koşar (B üzerine kurulur)
@@ -71,9 +73,23 @@ affect:                    # ARCHITECTURE.md §3.4 (Faz 4)
   seed_offset: 1000        # W_z üreteci seed + offset (rezervuar seed'inden ayrı)
   preact_l2: 0.03          # λ: z ön-aktivasyonu L2 cezası; doygunluk %60 → %3 (KR-021); 0 → yok
   head_weights: [1.0, 1.0, 1.0]   # q, u, s başlarının W_z'ye dönen hatadaki ağırlığı
+  dynamics:                # E/M/R duygu dinamiği (ARCHITECTURE.md §3.5); regülatörler E'yi okur
+    enabled: false         # false → regülatörler z'yi doğrudan okur (eski davranış)
+    alpha_up: 0.3          # α_up: duygu yükselme hızı (> alpha_down)
+    alpha_down: 0.08       # α_down: E'nin M'ye geri çekilme hızı
+    mood_rate: 0.005       # β_M: duygudurum birikim hızı (~200 adım ≈ 4 s)
+    gamma_up: 0.15         # γ_up: karşıt sürecin devreye girme hızı (< alpha_up)
+    gamma_decay: 0.05      # γ_decay: karşıt sürecin sönümü
+    threshold: 0.15        # θ_R: |E − M| bu eşiği aşınca R tetiklenir
+    lambda_max: 0.25       # R'nin E üzerindeki en büyük baskısı
+    kappa: 0.3             # |M| yükünün baskıyı zayıflatma katsayısı
+    center_rate: 0.001     # z girdisinin kayan ortalaması (~1000 adım ≈ 20 s); KR-026
 
-regulators:
+regulators:                # ARCHITECTURE.md §3.5 (Faz 5)
   enabled: false           # K5: false iken dört değer de varsayılanda sabit
+  mode: perturb            # perturb: W_r perturbasyonla öğrenilir | hand: elle eşleme (u yüksek → η↑, τ↓)
+  hand_gain: 1.0           # hand: W_r η/τ satırları = ±hand_gain · w_u (u başının z ağırlıkları)
+  tau_ceiling: 1.2         # asimetrik τ: aşağı τ_alt'a kadar, yukarı en çok 1.2·τ_varsayılan (§3.5, KR-030); null → simetrik
   defaults:
     g: 1.0
     tau: 100.0             # ms
@@ -85,5 +101,7 @@ regulators:
     eta: [1.0e-4, 1.0e-1]
     beta: [0.1, 10.0]
   perturbation:
-    M: 500                 # adım
+    M: 500                 # adım; referans ve deneme pencerelerinin her biri
     noise_std: 0.01
+    seed_offset: 2000      # gürültü üreteci seed + offset (rezervuar ve W_z seed'lerinden ayrı)
+    paired: true           # Δq = q_C − q_gölge (regülatörsüz gölge ajan, A); false → ham q (KR-028)

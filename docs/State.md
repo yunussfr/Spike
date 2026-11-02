@@ -2,8 +2,81 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Faz 3 ve Faz 4 tamamlandı (2026-10-31). Faz 5'e (regülatörler) geçiş kullanıcı onayıyla. Kapanış dokümanları commit bekliyor.
+**Şu an:** Faz 6 başladı (2026-11-02): hızlı-yavaş okuma ve nöromodüle plastisite (KR-031). Faz 5 kullanıcı kararıyla kapandı: temsil kayması çözüldü, C ≈ B+Z (KR-030). `faz5_full.py` tam koşusu (rapor seed'leri) yapılmadı.
 **Açık kararlar:** θ(τ) tablosu hâlâ "geçici"; `γ_rec` = 1.0 (1/3/10 arası fark gürültü düzeyinde).
+
+---
+
+## 2026-11-02 — Faz 5 kapanışı
+
+**Yaptıklarım**
+- [x] Faz 5 kullanıcı kararıyla kapatıldı ve commit edildi. Testler: 125/125.
+- [x] Bilimsel sonuç (KR-030 kapanış notu):
+  - τ modülasyonunun yarattığı temsil patlaması, nedensel normalizasyon ve κ(τ) ile çözüldü (−4,68 → en kötü −0,078).
+  - C, B+Z'den iyi değil. E sürümü: Indy +0,004 ± 0,013, Loco −0,012 ± 0,020.
+  - Hipotez: donuk okuma, τ'nun yarattığı zamansal temsil kaymasını izleyemiyor. Faz 6'da sınanacak.
+
+**Açık**
+- `faz5_full.py` tam koşusu yapılmadı (rapor seed'leri 0–4, test). Faz 5 sonuçları ayar seed'leri ve val ile sınırlı.
+
+---
+
+## 2026-11-02 — Temsil kaymasının giderilmesi (KR-030)
+
+**Yaptıklarım**
+- [x] Teşhis: τ 100 → 300'de V ~2,5 kat büyüyor. τ = 100'de sessiz kalan nöronlar uzun τ'da ateşleyince donuk normda 70σ'yı aşan değerler üretiyor. KR-029'daki −4,68'in mekanizması bu.
+- [x] ARCHITECTURE.md §3.2, §3.5, §8 ve §11 güncellendi. Koddaki değişiklikler:
+  - `agent.freeze_norm_eval: false`: nedensel EMA, ağırlıklar donuk; duygu uzayının r normu da dahil.
+  - `regulators.tau_ceiling: 1.2`: asimetrik tanh eşlemesi.
+  - `reservoir.v_gain_exp: 0.5`: v = (τ_ref/τ)^0,5·V.
+- [x] 7 yeni test; 121/121 geçiyor.
+- [x] Adil karşılaştırma: B+Z de nedensel normla koşuldu. Indy + Loco, seed 100–102, 3 tur. C − B+Z:
+  - E sürümü: Indy +0,004 ± 0,013, Loco −0,012 ± 0,020.
+  - z sürümü: Indy −0,001 ± 0,007, Loco −0,049 ± 0,027.
+  - En kötü fark −4,68'den −0,078'e indi. Val'de τ ≤ 118 ms.
+
+- [x] `experiments/faz5_full.py` yazıldı. İş birimi (oturum, seed); sabit akış A/B/B+Z'yi besler, C kendi rezervuar kopyasıyla akar. r diske yazılmaz. `jobs/*.json` ile sürdürülebilir (`--run`). Çıktılar: R² val/test, eşli C − X farkları, C için τ kutularına göre K7, seyreltilmiş g/τ/η/β/E izleri.
+  - Config: `faz5` bölümü (`configs/nhp_motor.yaml`): `[A, B, B+Z, C:perturb+EMR]`, 3 tur. σ = 0,1 config'e alındı (KR-025).
+  - 4 yeni test; duman koşusu (Indy, seed 0–1, 2000 adım) sorunsuz: leak_free = True, resume 6 s.
+  - Maliyet: adım başına ~20 ms (sabit akış 6,6 + C 13,4). Tam koşu 5,55 M adım ≈ 31 CPU-saat. 14 süreçle ~3–5 saat; en uzun iş (indy_20160622_01) tek başına ~2–3 saat. Fişe takılı ve uyku kapalı olmalı.
+
+**Açık**
+- Üç değişikliğin ayrı katkısı ölçülmedi.
+- Tam koşu (rapor seed'leri 0–4, test) henüz başlatılmadı.
+- Commit yapılmadı.
+
+---
+
+## 2026-11-01 — E/M/R duygu dinamiği
+
+**Yaptıklarım**
+- [x] Kullanıcının istediği E/M/R dinamiği (homeostatik + karşıt süreç): ARCHITECTURE.md §3.5/§6/§11, `AffectDynamics` (`src/affect.py`), config `affect.dynamics`, ajan bağlantısı. Kullanıcı onayıyla girdi merkezleme eklendi. Testler: 110/110.
+- [x] Çevrimdışı tekrar (30 z izi): titreme ~4–5 kat azalıyor; doygunluk merkezlemesiz %51–80, merkezli %2–11; R zamanın %81–95'inde devrede (KR-026).
+- [x] Kapalı döngü denemesi (Indy + Loco, seed 100, 3 tur, val): C:perturb Indy 0,330 / Loco 0,035; C:perturb+EMR 0,219 / 0,123; B+Z 0,322 / 0,139. İki sürüm de bir oturumda kötü (KR-027).
+
+- [x] 3 ayar seed'i (100–102): z okuyan C Loco'da 3/3 seed kötü (−0,078 ± 0,020); E/M/R ile −0,024 ± 0,026; Indy'de belirgin fark yok. İyileştirme yok (KR-028).
+
+- [x] Eşli perturbasyon (gölge A ajanı, §3.5, kullanıcı onayıyla) uygulandı ve testlendi. 3 seed: iyileşme yok; Loco'da felaket koşular (−4,68). Sebep: val'de regülatörler train'de nadir görülen τ rejimine geçiyor (örn. 74 → 314 ms), donuk okuma bunu kaldıramıyor (KR-029).
+
+**Açık**
+- Tam koşu bekletiliyor. Rejim kayması için seçenek kararı gerekiyor (KR-029: normalizasyonu çözmek / W_r'yi sınırlamak / val'de öğrenme açık).
+
+---
+
+## 2026-10-31 (akşam) — Faz 5 başlangıcı
+
+**Yaptıklarım**
+- [x] İş bölümü kararı: geliştirme ve küçük denemeler dizüstünde, uzun koşular (Faz 5 çıkışı, Faz 6) Colab Pro'da (CPU runtime, çıktılar Drive'a, devam ettirilebilir işler).
+- [x] `src/affect.py`: `Regulators` (K4 sınırları, log-ölçekli τ, perturbasyon ve elle eşleme modları). Ayrıntılar: KR-023.
+- [x] `src/agent.py`: konfigürasyon C, adım 2 (`regulators(z_{t−1})`) ve adım 10 (`regulators.update(q)`).
+- [x] Testler: `tests/test_regulators.py` (12), ajan testlerine C bölümü, `test_invariants.py`'ye K4/K5. Tümü geçiyor.
+- [x] Deneme koşusu `experiments/regulator_trial.py` (indy_20170131_02, 20 bin adım, seed 100, val): elle eşleme τ'yu 35–452 ms aralığında oynatıyor ama R² 0,214 → 0,166. Perturbasyon (σ = 0,01) neredeyse sabit kalıyor (τ 92–108). Bkz. KR-024.
+
+- [x] Perturbasyon ızgarası (σ × M, 3 tur, val, seed 100): σ = 0,1, M = 500 en iyi aday (R² 0,330 vs B+Z 0,322; τ 39–412 ms, sınırda %0). Tek seed, fark gürültü düzeyinde. Bkz. KR-025.
+
+**Açık**
+- σ = 0,1 config'e alınacak mı (onay) + ikinci oturumda doğrulama. Regülatör girdisinin yavaşlatılması (§3.5 değişikliği, onay gerekir).
+- Hız: C ajanı adım başına ~6–7 ms (rezervuar dahil, CPU). Tam oturum × 12 tur × 30 ajan Colab'da paralel koşulmalı.
 
 ---
 

@@ -117,7 +117,7 @@ Her faz bir öncekinin üzerine kurulur. Bir fazın **çıkış kriteri** sağla
 
 ---
 
-## Faz 5 — Regülatörler
+## Faz 5 — Regülatörler  ✅ Kapatıldı (2026-11-02, kullanıcı kararı; yalnızca ayar seed'leri ve val, KR-030)
 
 **Hedef:** z'nin davranışı ayarlaması: tam sistem, yani konfigürasyon C.
 

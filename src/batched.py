@@ -58,6 +58,8 @@ class BatchedAgent:
             for block in (a.decision, a.cerebellum):
                 if block is not None and block.rule != "normalized":
                     raise NotImplementedError("batch'li ajan yalnızca normalized kuralı destekler")
+        if a0.regulators is not None and a0.regulators.enabled:
+            raise NotImplementedError("batch'li ajan regülatörleri desteklemez (r öğrenmeye bağlı, C)")
         self.M = len(agents)
         self.device = device
         self.eta = a0.eta
@@ -130,7 +132,7 @@ class BatchedAgent:
         if not self.has_affect:
             return {}
         # forward: z = tanh(W_z · φ̃(r)), başlar
-        self.aff_norm.frozen = self.aff_frozen
+        self.aff_norm.frozen = self.aff_frozen and self.freeze_norm_eval
         phi = self.aff_norm(self.r_t)                                                # [M, F+1]
         a = torch.einsum("mf,mkf->mk", phi, self.W_z)                                # [M, k]
         z = torch.tanh(a)

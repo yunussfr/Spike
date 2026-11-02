@@ -47,6 +47,7 @@ Sabit (eğitilmeyen) bir spiking projeksiyon bloğu üzerine, yalnızca yerel ku
 
 - Regülatör çıktıları sigmoid ile [0, 1] aralığına alınır, sonra bu sınırlara doğrusal olarak ölçeklenir.
 - τ log-ölçekte ölçeklenir (20 ile 2000 arası çok geniş bir aralık olduğu için).
+- τ eşlemesi asimetrik olabilir (`regulators.tau_ceiling`, §3.5): aşağı yönde alt sınıra (20) kadar iner, yukarı yönde `tau_ceiling · τ_varsayılan` tavanında yumuşakça doyar. Tavan K4 aralığının içindedir; K4 ihlal edilmez (KR-030).
 - Regülatörün ürettiği τ, rezervuar nöronlarının zaman sabitlerinin **geometrik ortalamasıdır**. Her nöronun kendi zaman sabiti `τ_i = τ · m_i`'dir (Bölüm 3.2); regülatör yalnızca ortak τ'yu değiştirir, `m_i`'lere dokunamaz.
 - τ aralığı zaman ölçeğine göre seçilmiştir: bir ortam adımı `T · dt = 20 ms` sürer. τ = 20 ms ile bellek yaklaşık 1 ortam adımı, τ = 2000 ms ile yaklaşık 100 ortam adımı mertebesindedir.
 - Regülatörler başka hiçbir hiperparametreye, ağırlığa ya da modül yapısına dokunamaz.
@@ -125,10 +126,16 @@ V(t)     = V(t) − θ(τ) · s(t)                   # yumuşak sıfırlama: ate
 **Okuma vektörü r(t).** Ortam adımı sonunda okuma bloklarına (beyincik, duygu uzayı, karar) giden temsil iki parçanın birleşimidir:
 ```
 f(t) = Σ_{i=1..T} s(i) / T          # T iç adım boyunca ortalama ateşleme oranı   [B, N]
-v(t) = V(T)                          # ortam adımı sonundaki zar potansiyelleri     [B, N]
+v(t) = κ(τ) · V(T)                   # ortam adımı sonundaki zar potansiyelleri     [B, N]
+κ(τ) = (τ_ref / τ)^p                 # varyans koruyucu kazanç; τ_ref = τ varsayılanı, p = reservoir.v_gain_exp
 r(t) = [f(t), v(t)]                  # okuma vektörü                                [B, 2N]
 ```
 Sebep: Uzun τ'da bellek spike'lardan çok zar potansiyelinde saklanır. Okuma yalnızca spike'lara bakarsa bu bilgi görünmez. Bu dosyada `r(t)` yazan her yer bu birleşik `[B, 2N]` vektörü ifade eder.
+
+**Varyans koruyucu kazanç κ(τ).** `(1−ᾱ)` çarpanı olmadığı için V'nin durağan ölçeği τ ile büyür. Ölçüm (ayar seed'i, train): τ 100 → 300'de |V| ~2,5 kat, std ~1,7 kat artar; θ(τ) neredeyse sabittir, bu yüzden V/θ bunu düzeltmez.
+- κ yalnızca okuma vektörüne uygulanır. Dinamik, spike'lar, θ(τ) tablosu ve K7 değişmez. Girdi terimini κ ile ölçeklemek, V'yi ve kalibre θ'yı birlikte ölçekler; spike'lar aynı kalır. Bu yüzden iki yol okuma açısından eşdeğerdir.
+- τ = τ_ref'te κ = 1'dir; sabit τ'lu A ve B'nin r'si değişmez.
+- p = 0,5, std oranını τ ∈ [30, 500] aralığında 0,86–1,06'da tutar ("varyans koruyucu"). p = 1 (`(1−ᾱ)/(1−ᾱ_ref)`) ortalamayı korur ama varyansı yarıya indirir. p = 0 → kapalı.
 
 **Ateşleme eşiği θ(τ):**
 - θ tek bir sayı değil, τ'nun fonksiyonudur. Başlangıçta bir kez, rastgele bir kalibrasyon girdisiyle, her τ değerinde ortalama ateşleme oranı `ρ`'ya yakın kalacak şekilde hesaplanır. Sonra sabit bir tablo olarak saklanır ve τ aralığında log-doğrusal interpolasyonla okunur.
@@ -184,15 +191,60 @@ z'nin üç tahmin başı (head) vardır. Her biri z'den bir değer tahmin eder:
 - `W_z` kendi seed'li üreteciyle başlatılır; global RNG'ye dokunmaz. Böylece duygu uzayını açmak diğer blokların sonuçlarını değiştirmez.
 
 ### 3.5 Regülatörler
+
+**Duygu dinamiği (E, M, R).** Regülatörler z(t)'yi doğrudan okumaz. z anlık bir durumdur ve her adımda sıçrar (KR-024). Araya üç katmanlı, sürekli zamanlı bir dinamik girer. Esin kaynakları: DynAffect (homeostatik geri çekilme), WASABI (duygu–duygudurum çift zaman ölçeği), CoMERG/Gross (kapalı döngü regülasyon, karşıt süreç).
+- `E` (fazik duygu): hızlı, kısa vadeli durum. Regülatörlerin girdisidir.
+- `M` (tonik duygudurum): yavaş birikim; E için dinamik denge noktası.
+- `R` (karşıt süreç): E ile M arasındaki sapmayı gecikmeli olarak bastırır.
+
+Her adımda, hepsi `[B, k]`, eleman bazında:
 ```
-ham     = σ(W_r · z(t) + b_r)                # şekil: [4]
+z_in   = z − μ_z;   μ_z ← μ_z + c_μ · (z − μ_z)            # girdi merkezleme (nedensel kayan ortalama)
+error  = E − M
+drive  = max(0, |error| − θ_R) · sign(error)                 # eşik altı sapmaya tepki yok
+R      ← (1 − γ_decay) · R + γ_up · (1 − |R|) · drive
+λ_eff  = λ_max · (1 − κ · |M|)                               # kronik duygudurum yükü regülatörü zayıflatır
+E      ← E + α_up · (1 − |E|) · z_in − α_down · (E − M) − λ_eff · R
+M      ← (1 − β_M) · M + β_M · E
+```
+- E ve R yalnızca sonda sayısal güvenlik için `[−1, 1]`'e kırpılır. Adım başına değişim hızı sınırlanmaz. Seyrek güncelleme yoktur; dinamik ve regülatör çıktıları her adım güncellenir.
+- Kısıtlar: `α_up > α_down` (duygu, söndüğünden hızlı yükselir); `γ_up < α_up` (önce duygu tepki verir, sonra regülatör dizginler).
+- Dinamik öğrenmez (sabit kural, `update` yok). δ ve e'yi görmez, yalnızca z'yi okur (K3). Durum yeni dizide sıfırlanır (K6).
+- Girdi merkezleme şart: z'nin ortalaması sıfır değildir. Merkezlemesiz E, ortalamayı biriktirir ve M ile birlikte ±1'e kayar. Faz 4 izlerinde E zamanın %54–98'inde doygundu; merkezlemeyle %0–28 (KR-026).
+- Ad ayrımı: θ_R, β_M, α_up/α_down, γ_up/γ_decay, λ_max ve κ yalnızca bu dinamiğe aittir. θ(τ) eşiği, β karar sıcaklığı, α_i sızıntısı, γ_rec, preact λ ve perturbasyon periyodu M ile karıştırılmamalı. Config'te `affect.dynamics` altında tutulur.
+- `affect.dynamics.enabled: false` iken regülatörler z'yi doğrudan okur (eski davranış, ablation için).
+
+**Regülatör eşlemesi:**
+```
+ham     = σ(W_r · E(t) + b_r)                # şekil: [4]; dinamik kapalıyken E yerine z
 g, η, β = alt + ham · (üst − alt)
 τ       = exp(log τ_alt + ham_τ · (log τ_üst − log τ_alt))
 ```
+**Asimetrik τ eşlemesi (`regulators.tau_ceiling: c`, null → yukarıdaki simetrik sigmoid).**
+```
+a       = (W_r · E(t))_τ                                  # bias yok: a = 0 → τ = τ_varsayılan
+log τ   = log τ_0 + Δ_alt · tanh(a)     (a < 0),   Δ_alt = log(τ_0 / τ_alt)
+log τ   = log τ_0 + Δ_üst · tanh(a)     (a ≥ 0),   Δ_üst = log(min(c · τ_0, τ_üst) / τ_0)
+```
+- Kısa τ'ya (hızlı unutma) alt sınıra kadar izin verilir; uzun τ `c · τ_0` tavanında doyar (varsayılan c = 1,2 → 120 ms).
+- Sebep: KR-029'da uzun τ'ya kayma val'de yıkıcıydı (Loco −4,68), kısa τ'ya kayma zararsızdı. Uzun τ, V ölçeğini büyütür ve train'de hiç ateşlemeyen nöronları ateşletir. Yu & Dayan (2005) esinli yorum: beklenmeyen belirsizlikte (dağılım kayması) eski bilgiyi daha hızlı unutmak doğru yöndür, belleği uzatmak değil.
+- W_r'ye ceza ya da norm sınırı yoktur; yalnızca τ'nun çıkış eşlemesi asimetriktir. g, η, β eşlemesi değişmez.
+
 **W_r eğitimi (perturbasyon yöntemi):**
 1. Her `M` adımda bir `W_r`'ye küçük bir rastgele gürültü eklenir.
 2. Sonraki `M` adımın ortalama `q`'su öncekiyle karşılaştırılır.
 3. İyileşme varsa değişiklik tutulur, yoksa geri alınır.
+
+**Eşli karşılaştırma (varsayılan, `perturbation.paired: true`).** Ham q'nun pencereden pencereye değişimi büyük ölçüde verinin zorluğundan gelir (KR-028: kabul oranı ~%50, W_r rastgele yürüyor). Bu yüzden C'nin yanında regülatörsüz bir **gölge ajan** koşar: aynı sabit rezervuarın ayrı bir kopyası (varsayılan g, τ) ve kendi karar bloğu (konfigürasyon A). Aynı x(t), y(t)'yi aynı anda görür ve kendi δ'sıyla öğrenir. Perturbasyon kararı ham q yerine farkla verilir:
+```
+Δq(t) = q_C(t) − q_gölge(t),   q = −‖δ‖²
+tut ⇔ ortalama Δq (deneme) > ortalama Δq (referans)
+```
+- Gölge yalnızca karşılaştırma sinyali üretir. C'nin hiçbir bloğuna girdi vermez, C'nin δ ve e'sini değiştirmez (K3). Rezervuar kopyası K1'e uyar.
+- Gölge, A ile aynı kuruluma sahiptir (beyincik yok). K3'e göre beyincik karar çıktısını etkilemediği için q açısından B ile aynıdır.
+- `paired: false` iken eski davranış (ham q) kullanılır.
+
+Perturbasyon penceresi M yalnızca W_r'nin öğrenme protokolüdür. Regülatör çıktıları her adım güncellenir, M adımda bir değil.
 
 ### 3.6 Karar bloğu
 - **Regresyon görevleri** (örneğin primat motor tahmini): `ŷ(t) = W_a · r(t)`. β kullanılmaz.
@@ -256,14 +308,14 @@ Her modül aynı üç metodu sağlar:
 ## 6. Bir adımın akışı (`agent.step`)
 
 1. `u = encoder(x_t)`
-2. `g, τ, η, β = regulators(z_{t−1})` (ilk adımda varsayılanlar kullanılır)
+2. `g, τ, η, β = regulators(E_{t−1})` (ilk adımda varsayılanlar kullanılır)
 3. `r_t = reservoir(u, g, τ)`
 4. `ŷ_t = decision(r_t, β)` → çıktı
 5. `x̂_{t+1} = cerebellum(r_t, ŷ_t)`
 6. Hedef `y_t` ve sonraki girdi `x_{t+1}` gelir.
 7. `δ_t = y_t − ŷ_t` → `decision.update(δ_t, η)`
 8. `e_{t+1} = x_{t+1} − x̂_{t+1}` → `cerebellum.update(e_{t+1}, η)`
-9. `z_t = affect(r_t)` → `affect.update(q, u, s)`
+9. `z_t = affect(r_t)` → `affect.update(q, u, s)`; `E_t = dynamics(z_t)` (§3.5)
 10. Her `M` adımda: `regulators.update(...)` (perturbasyon kontrolü)
 
 ## 7. Varsayılan hiperparametreler
@@ -305,6 +357,14 @@ Her deney üç konfigürasyonla koşulur:
 - Regülatörlerin zaman içindeki değerleri (g, τ, η, β grafikleri).
 - z uzayının görselleştirmesi (k = 3 ise doğrudan 3B çizim).
 
+**Değerlendirmede normalizasyon (`agent.freeze_norm_eval`).** Değerlendirmede ağırlıklar her zaman donuktur. `freeze_norm_eval: false` iken okuma bloklarının girdi standartlaştırıcıları (karar, beyincik, duygu uzayının r normu) etiketsiz ve nedensel olarak güncellenmeye devam eder:
+```
+μ_t = (1−ρ_n)·μ_{t−1} + ρ_n·r_t,   σ²_t = (1−ρ_n)·σ²_{t−1} + ρ_n·(r_t − μ_t)²,   r̃_t = (r_t − μ_t)/√(σ²_t + ε)
+```
+- Yalnızca r_1..r_t kullanılır (gelecek yok, batch istatistiği yok). Hedef (y, q, u, s) istatistikleri ve tüm ağırlıklar donuk kalır.
+- Bu, sinaptik ağırlıklardan bağımsız intrinsik homeostatik ölçeklemedir: Turrigiano (2008) sinaptik ölçekleme ve Carandini & Heeger (2012) bölücü normalizasyon esinli. Etiketsiz duyusal adaptasyona (ör. göz bebeği refleksi) benzer (KR-030).
+- Karşılaştırmalar aynı ayarla yapılır: A, B, B+Z ve C ya hepsi donuk ya hepsi nedensel normalizasyonla.
+
 **Ana iddianın kanıtı:** C'nin, kayma testinde A ve B'den istatistiksel olarak anlamlı biçimde iyi olması (5 seed, t-testi ya da Wilcoxon testi).
 
 ## 9. Kodlama kuralları
@@ -331,6 +391,9 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-02 | Değerlendirmede nedensel homeostatik normalizasyon (`freeze_norm_eval: false`, §8); asimetrik τ eşlemesi (`tau_ceiling`, §3.5); okuma vektöründe varyans koruyucu κ(τ) (§3.2) | KR-029: regülatörlerin τ'yu kaydırması donuk okuma için temsil kaymasına dönüşüyordu (KR-030) |
+| 2026-11-01 | Perturbasyon eşli karşılaştırmayla: Δq = q_C − q_gölge (§3.5) | Ham q ile kabul oranı ~%50; W_r rastgele yürüyor, z okuyan C Loco'da 3/3 seed kötü (KR-028) |
+| 2026-11-01 | Regülatörler z yerine E/M/R duygu dinamiğinin E'sini okur (§3.5); z girdisi merkezlenir | z her adımda sıçradığı için g/τ/η her 20 ms'de titriyordu (KR-024). E/M/R titremeyi 10–30 kat azaltır; merkezlemesiz E doygun kalıyordu (KR-026) |
 | 2026-10-24 | `(1−α)` çarpanı kaldırıldı | τ büyüdükçe girdi gücü küçülüyor, nöronlar ateşlemiyordu (τ=100'de ateşleme oranı %0.08) |
 | 2026-10-24 | k-WTA "tam k" yerine "eşiği geçenlerden en fazla k" oldu | "Tam k" kuralı ile "girdi yokken aktivite sönsün" testi birbiriyle çelişiyordu |
 | 2026-10-24 | Okuma vektörü `[f, v]` (`[B, 2N]`) oldu | Bellek zar potansiyelinde duruyor, yalnızca spike'lara bakan okuma onu göremiyordu |

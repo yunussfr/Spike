@@ -37,3 +37,18 @@ nhp:
 
 decision:
   norm_rate: 0.0003        # val: 0,01 → 0,28; 0,001 → 0,34; 0,0003 → 0,38 (12 tur)
+
+regtrial:                  # Faz 5 deneme koşusu (experiments/regulator_trial.py); yalnızca ayar seed'i ve val
+  configs: [B+Z, C:hand, C:perturb]   # C:<mod> → agent.config C, regulators.enabled, regulators.mode
+  epochs: 1
+  max_steps: 20000         # oturumu kısaltır (null → tam oturum)
+
+regulators:
+  perturbation:
+    noise_std: 0.1         # σ: ayar seed'i 100, Indy val'de seçildi (KR-025); 0,01 ile W_r neredeyse hiç değişmiyordu
+
+faz5:                      # Faz 5 çıkış koşusu (experiments/faz5_full.py); rapor seed'leri, test raporlanır
+  configs: [A, B, B+Z, "C:perturb+EMR"]   # C: E okuyan sürüm (KR-030); "C:perturb" z okuyan sürüm
+  epochs: 3                # tüm konfigürasyonlar aynı tur sayısıyla (Faz 3–4'teki 12 tur değil)
+  max_steps: null          # duman koşusu için oturumu kısaltır
+  trace_every: 10          # C izleri (g, τ, η, β, E) her 10 adımda bir kaydedilir

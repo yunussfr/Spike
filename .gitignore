@@ -4,4 +4,5 @@ __pycache__/
 *.pyc
 *.pt
 .pytest_cache/
-data/
+/data/
+.claude

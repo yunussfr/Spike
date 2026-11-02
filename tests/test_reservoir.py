@@ -260,3 +260,26 @@ def test_wrong_T_raises() -> None:
 
 def test_k_rounding() -> None:
     assert make_reservoir().k == math.ceil(CFG["reservoir"]["rho"] * N)
+
+
+def test_v_gain_compensation(calibrated_reservoir: LIFReservoir) -> None:
+    """κ(τ) = (τ_ref/τ)^p yalnızca okumadaki v'yi ölçekler; f, V ve spike'lar değişmez. τ = τ_ref → κ = 1."""
+    res = calibrated_reservoir
+    enc = SpikeEncoder.from_config(CFG, D_in=D_IN)
+    x = torch.rand(6, 2, D_IN, generator=torch.Generator().manual_seed(4))
+    old = res.v_gain_exp
+    try:
+        for tau in (TAU_DEFAULT, 300.0):
+            outs = {}
+            for p in (0.0, 0.5):
+                res.v_gain_exp = p
+                res.reset_state()
+                enc.reset_state()
+                for t in range(len(x)):
+                    r = res(enc(x[t]), g=1.0, tau=tau)
+                outs[p] = (r, res.V.clone())
+            (r0, V0), (r1, V1) = outs[0.0], outs[0.5]
+            assert torch.equal(V0, V1) and torch.equal(r0[:, :N], r1[:, :N])
+            assert torch.allclose(r1[:, N:], V0 * (TAU_DEFAULT / tau) ** 0.5)
+    finally:
+        res.v_gain_exp = old

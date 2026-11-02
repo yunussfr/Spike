@@ -88,3 +88,32 @@ def test_k7_firing_rate_within_bounds(calibrated_reservoir: LIFReservoir, tau: f
             rates.append(r[:, : res.N].mean().item())
     rate = sum(rates) / len(rates)
     assert rho / 2 <= rate <= 2 * rho
+
+
+def test_k4_regulators_within_bounds() -> None:
+    """K4: regülatör çıktıları, W_r ne olursa olsun, sınırların içinde; yalnızca dört parametre."""
+    import copy
+    from src.affect import PARAMS, Regulators
+    cfg = copy.deepcopy(CFG)
+    cfg["regulators"]["enabled"] = True
+    reg = Regulators.from_config(cfg, seed=0)
+    gen = torch.Generator().manual_seed(0)
+    reg.W_r = torch.randn(reg.W_r.shape, generator=gen) * 100
+    out = reg(torch.rand(512, cfg["affect"]["k"], generator=gen) * 2 - 1)
+    assert set(out) == set(PARAMS) == {"g", "tau", "eta", "beta"}
+    for p, v in out.items():
+        lo, hi = cfg["regulators"]["bounds"][p]
+        assert (v >= lo * (1 - 1e-5)).all() and (v <= hi * (1 + 1e-5)).all(), p
+
+
+def test_k5_regulators_disabled_constant() -> None:
+    """K5: regulators.enabled: false → dört değer varsayılanda sabit."""
+    import copy
+    from src.affect import Regulators
+    cfg = copy.deepcopy(CFG)
+    cfg["regulators"]["enabled"] = False
+    reg = Regulators.from_config(cfg, seed=0)
+    reg.W_r.fill_(10.0)
+    out = reg(torch.randn(8, cfg["affect"]["k"]))
+    for p, v in out.items():
+        assert torch.equal(v, torch.full((8,), float(cfg["regulators"]["defaults"][p])))

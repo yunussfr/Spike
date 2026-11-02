@@ -165,6 +165,233 @@ Her kayıt:
 
 ---
 
+## Faz 5 — Regülatörler (2026-10-31)
+
+### KR-023 — Regülatörlerin uygulama ayrıntıları (ARCHITECTURE.md §3.5)
+- **Bağlam:** §3.5 formülü ve perturbasyonun üç adımını veriyor. Ama başlangıç değerleri, "öncekiyle karşılaştır"ın neyle yapılacağı ve batch'te η/β'nın nasıl kullanılacağı açık değil.
+- **Karar** (`src/affect.py` `Regulators`, `src/agent.py` adım 2 ve 10):
+  - `W_r = 0`, `b_r = logit(varsayılanın konumu)` → başlangıçta çıktı tam olarak varsayılanlar.
+  - Perturbasyon dönüşümlü pencerelerle yapılır: M adım referans (mevcut W_r) → `W_r + N(0, σ²)` ile M adım deneme → deneme penceresinin ortalama q'su referanstan büyükse tutulur, değilse geri alınır. Referans her denemeden hemen önce yeniden ölçülür. Sebep: veri kayarken eski bir referansla karşılaştırmak, zorlaşan veride her denemeyi reddeder, kolaylaşan veride her denemeyi kabul eder.
+  - Yalnızca `W_r` perturbe edilir (§3.5'teki gibi), `b_r` edilmez. Gürültü kendi seed'li üretecinden gelir (`perturbation.seed_offset`).
+  - g ve τ örnek başınadır (`[B]`). η ve β batch ortalamasıdır, çünkü güncellemeler zaten batch üzerinden ortalanıyor.
+  - Konfigürasyon C = B + duygu uzayı + regülatörler. `regulators.enabled: false` iken C, B+Z ile birebir aynıdır (K5, test edildi).
+  - Değerlendirmeye geçerken (`set_eval`) yarım kalan deneme geri alınır, regülatörler donar. Ancak z'yi okumaya devam ederler.
+  - Elle eşleme (`mode: hand`, PHASES.md ara adımı): η satırı `+c·w_u`, τ satırı `−c·w_u`. Burada `w_u`, duygu uzayının u başının z ağırlıklarıdır. Yani "belirsizlik yüksekse η artar, τ kısalır". g ve β varsayılanda kalır.
+  - `BatchedAgent` regülatörleri desteklemez. C'de r öğrenmeye bağlıdır, önceden üretilemez; her ajan kendi rezervuar kopyasıyla adım adım akar.
+- **Durum:** Uygulandı. Testler: `tests/test_regulators.py` (12), `tests/test_agent.py` (Faz 5 bölümü), `tests/test_invariants.py` (K4, K5). ARCHITECTURE.md §3.5'e işlenmesi kullanıcı onayı bekliyor.
+
+### KR-024 — İlk deneme koşusu: mekanizma çalışıyor, iki sorun var (açık)
+- **Koşu:** `experiments/regulator_trial.py`, `indy_20170131_02` (20 000 adıma kısaltılmış), ayar seed'i 100, 1 tur, yalnızca val. Log: `runs/20261031-200842_nhp_motor_regtrial_seed100`.
+
+  | Konfigürasyon | R² (val) | τ aralığı (ms) | η aralığı | g aralığı | Sınırda | Deneme / kabul |
+  |---|---|---|---|---|---|---|
+  | B+Z | 0,214 | 100 (sabit) | 0,01 (sabit) | 1 (sabit) | — | — |
+  | C:hand (c = 1) | 0,166 | 35–452 | 0,0028–0,031 | 1 (sabit) | %0 | — |
+  | C:perturb (σ = 0,01, M = 500) | 0,216 | 92–108 | 0,0095–0,0106 | 0,97–1,04 | %0 | 15 / 9 |
+- **Sorun 1 — perturbasyon çok küçük adım atıyor:** Varsayılan σ = 0,01 ile değerler varsayılanın ±%5'inde kalıyor. Kabul oranı %60, yani rastgeleye yakın. 500 adımlık q ortalamasındaki veri gürültüsü, perturbasyonun etkisinden büyük olabilir. Çıkış kriteri 1 ("anlamlı biçimde değişiyor") bu ayarla sağlanmıyor.
+- **Sorun 2 — değerler adım adım titriyor:** Hem elle eşlemede hem perturbasyonda g/τ/η her adımda büyük sıçrıyor, çünkü z(t) anlık bir durumdur. Elle eşlemede τ'nun hızlı değişmesi okumanın gördüğü r dağılımını sürekli kaydırıyor. R²'deki düşüş (0,214 → 0,166) muhtemelen bundan.
+- **Sonraki adım (karar bekliyor):** (a) val/ayar seed'inde σ ∈ {0,01; 0,1; 0,3} × M ∈ {500; 2000} ızgarası; (b) regülatör girdisinin yavaşlatılması (ör. z'nin EMA'sı). (b) §3.5'i değiştirir, önce teşhis tablosu ve kullanıcı onayı gerekir.
+
+### KR-025 — Perturbasyon ızgarası (σ × M): öneri σ = 0,1, M = 500 (onay bekliyor)
+- **Koşu:** `experiments/regulator_trial.py`, `indy_20170131_02` (20 000 adım), ayar seed'i 100, **3 tur**, yalnızca val. 7 paralel süreç, her biri ~17–18 dk. Loglar: `runs/20261031-203910_grid_*`.
+
+  | σ | M | R² (val) | g aralığı | τ aralığı (ms) | η aralığı | Sınırda (en kötü) | Deneme / kabul |
+  |---|---|---|---|---|---|---|---|
+  | — (B+Z) | — | 0,322 | 1 | 100 | 0,01 | — | — |
+  | 0,01 | 500 | 0,325 | 0,93–1,07 | 90–115 | 0,0086–0,011 | %0 | 47 / 28 |
+  | 0,01 | 2000 | 0,321 | 0,98–1,02 | 93–107 | 0,0094–0,011 | %0 | 11 / 5 |
+  | **0,1** | **500** | **0,330** | **0,62–1,65** | **39–412** | **0,0016–0,038** | **%0** | **47 / 26** |
+  | 0,1 | 2000 | 0,305 | 0,87–1,21 | 54–209 | 0,0051–0,018 | %0 | 11 / 5 |
+  | 0,3 | 500 | 0,212 | 0,50–2,00 | 21–1753 | 0,0001–0,099 | %7 (g, η) | 47 / 29 |
+  | 0,3 | 2000 | 0,273 | 0,68–1,60 | 28–764 | 0,0014–0,046 | %0 | 11 / 5 |
+- **Okuma:**
+  - σ = 0,01 her M'de değerleri varsayılanın ±%15'inde tutuyor → çıkış kriteri 1 sağlanmıyor.
+  - σ = 0,3 aşırı: M = 500'de g ve η zamanın ~%7'sinde sınırda, R² 0,11 düşüyor.
+  - σ = 0,1, M = 500 iki kriteri de karşılıyor: değerler geniş aralıkta oynuyor, sınıra yapışmıyor, R² B+Z'den kötü değil (+0,008).
+  - **Dikkat:** Tek seed ve tek kısaltılmış oturum; ±0,01'lik R² farkları büyük olasılıkla gürültü düzeyinde. Kabul oranı her ayarda %45–60, yani perturbasyonun q üzerindeki etkisi pencere gürültüsünden pek ayrışmıyor. "Regülatörler iyileştiriyor" iddiası buradan çıkmaz. Yalnızca "zarar vermeden anlamlı değişiyor" denebilir.
+  - M = 2000'de 3 turda yalnızca 11 deneme var; bu kısa oturumda adil bir karşılaştırma değil.
+- **Öneri:** `regulators.perturbation.noise_std: 0.1`, `M: 500`. Doğrulama için ikinci bir oturumda (ör. `loco_20170215_02`, KR-021'deki gibi) aynı karşılaştırma.
+- **Durum:** Config henüz değişmedi, kullanıcı onayı bekliyor. Adım adım titreme sorunu (KR-024, sorun 2) açık.
+
+### KR-026 — E/M/R duygu dinamiği; regülatörler z yerine E'yi okur (ARCHITECTURE.md §3.5)
+- **Bağlam:** KR-024'teki titreme sorunu: regülatörler anlık z'yi okuyor, g/τ/η her 20 ms'de sıçrıyor. Kullanıcı seyrek güncelleme, basit EMA ve hız sınırı yerine literatüre dayanan bir dinamik istedi: DynAffect (homeostatik geri çekilme), WASABI (duygu–duygudurum çift zaman ölçeği), CoMERG/Gross (karşıt süreç). Formüller ve varsayılan değerler kullanıcıdan geldi.
+- **Karar:**
+  - `src/affect.py` `AffectDynamics`: E (fazik duygu), M (tonik duygudurum), R (karşıt süreç). Formüller §3.5'te. Config `affect.dynamics` altında.
+  - Ajan adım 9'dan sonra `E = dynamics(z)` hesaplar; regülatörler E_{t−1}'i okur. `dynamics.enabled: false` iken z okunur (eski davranış).
+  - **Girdi merkezleme (kullanıcı onayıyla eklendi):** `z_in = z − μ_z`, `center_rate = 0,001` (~20 s).
+  - İsim ayrımı: kullanıcının beta/theta/M adları projede başka anlamlarda kullanıldığından config'te `mood_rate`, `threshold` adları kullanıldı. Perturbasyon penceresi M, W_r'nin öğrenme protokolü olarak kalıyor; regülatör çıktıları her adım güncelleniyor.
+- **Çevrimdışı tekrar** (`experiments/affect_dynamics_replay.py`): Faz 4 tam koşusunun 30 z izi (son train turu, döngü açık). Log: `runs/20261101-161333_affect_dynamics_replay_seeds0-1-2-3-4`.
+
+  | Oturum | \|ΔE\|/\|Δz\| | Doygun (merkezsiz) | Doygun (merkezli) | En kötü boyut (merkezli) | R aktif |
+  |---|---|---|---|---|---|
+  | indy_20170131_02 | 0,21 | %73 | %9 | %23 | %81 |
+  | indy_20160630_01 | 0,24 | %51 | %11 | %28 | %83 |
+  | indy_20160622_01 | 0,25 | %68 | %4 | %12 | %87 |
+  | loco_20170301_05 | 0,20 | %71 | %5 | %10 | %93 |
+  | loco_20170215_02 | 0,20 | %69 | %2 | %4 | %95 |
+  | loco_20170210_03 | 0,22 | %80 | %6 | %14 | %87 |
+
+- **Okuma:**
+  - Titreme her oturumda ~4–5 kat azalıyor.
+  - Merkezleme şart: merkezlemesiz E zamanın %51–80'inde doygun.
+  - Merkezlemeyle de ortalaması çok kayık boyutta (ör. Indy'de ortalama −0,76) E zamanın ~%23'ünde −1 civarında. Sebep `(1−|E|)` çarpanının asimetrisi: z çoğunlukla hafif negatif, arada büyük pozitif sıçramalar var; sıçramalar geldiğinde E zaten −1'e yakın ve etkisi kısılıyor.
+  - **R zamanın %81–95'inde devrede.** θ_R = 0,15, E'nin yayılımına (std ~0,4) göre küçük. "Olay güdümlü" olması beklenen regülatör neredeyse sürekli çalışıyor. θ_R ayarı açık soru.
+- **Durum:** Uygulandı, testler geçiyor (`tests/test_affect_dynamics.py`, ajan testleri). Kapalı döngü sonucu KR-027'de.
+
+### KR-027 — Kapalı döngü E/M/R denemesi: C her iki sürümde de bir oturumda kötüleşiyor (açık)
+- **Koşu:** `experiments/regulator_trial.py`, iki oturum (20 000 adım), ayar seed'i 100, 3 tur, yalnızca val, σ = 0,1, M = 500. 6 paralel süreç, ~16 dk. Loglar: `runs/20261101-161716_emr_*`.
+
+  | Oturum | B+Z | C:perturb (z) | C:perturb+EMR (E) | E doygun | \|ΔE\| |
+  |---|---|---|---|---|---|
+  | indy_20170131_02 | 0,322 | **0,330** | 0,219 | %2,2 | 0,065 |
+  | loco_20170215_02 | 0,139 | 0,035 | **0,123** | %4,3 | 0,060 |
+
+  Regülatör aralıkları (EMR): g 0,62–1,57, τ 46–257 ms, η 0,0024–0,033. Sınırda %0.
+- **Okuma:**
+  - KR-025'teki σ = 0,1 seçimi ikinci oturumda **doğrulanmadı**: Loco'da C:perturb, B+Z'den 0,10 kötü.
+  - E/M/R, Loco'daki kaybı büyük ölçüde kapatıyor (−0,016), ama Indy'de 0,10 kaybettiriyor. İki sürüm de çıkış kriteri 2'yi ("C, A ve B'den kötü değil") en az bir oturumda sağlamıyor.
+  - Kabul oranı her yerde %53–62, yani rastgeleye yakın. Perturbasyon, W_r'yi yönlü öğrenmekten çok rastgele yürütüyor. Sonuç, yürüyüşün nereye vardığına bağlı. Tek seed'le bu, gürültüden ayırt edilemez.
+  - Grafikte E'yi okuyan regülatörler ham z'ye göre daha sakin, ama hâlâ onlarca adımlık salınımlar var (E'nin kendi salınımı, KR-026 grafiği).
+- **Sonuç:** Faz 5 tam koşusu (plan basamak 6) bu haliyle başlatılmamalı. Önce farkların seed gürültüsü mü yoksa sistematik mi olduğu ölçülmeli.
+- **Seçenekler (karar bekliyor):**
+  - (a) Aynı denemeyi 3 seed'le tekrarlamak (~25–30 dk, 16 çekirdek): farklar gürültü mü?
+  - (b) Perturbasyon sinyalinin gürültüsünü azaltmak: deneme penceresinin q'su, aynı veriyi gören regülatörsüz bir gölge ajanın q'suna göre karşılaştırılır (eşli karşılaştırma). §3.5 değişikliği, onay gerekir.
+  - (c) E/M/R ayarları (θ_R, α_up): R zamanın %81–95'inde devrede (KR-026).
+
+### KR-028 — 3 ayar seed'i: z okuyan C Loco'da sistematik kötü, E/M/R zararı azaltıyor ama iyileştirmiyor
+- **Koşu:** KR-027 ile aynı protokol, ayar seed'leri 100, 101, 102 (rapor seed'leri 0–4 değil). 12 ek süreç, ~25 dk. Loglar: `runs/20261101-*_emr_*_s101|s102_regtrial_seed10x`.
+
+  R² (val), seed 100 / 101 / 102:
+
+  | Oturum | B+Z | C:perturb (z) | C:perturb+EMR (E) |
+  |---|---|---|---|
+  | indy_20170131_02 | 0,322 / 0,305 / 0,277 | 0,330 / 0,309 / 0,266 | 0,219 / 0,294 / 0,294 |
+  | loco_20170215_02 | 0,139 / −0,028 / 0,101 | 0,035 / −0,085 / 0,029 | 0,123 / −0,088 / 0,104 |
+
+  Eşli fark, C − B+Z (aynı seed), ortalama ± std:
+
+  | Oturum | C:perturb (z) | C:perturb+EMR (E) |
+  |---|---|---|
+  | indy_20170131_02 | +0,000 ± 0,008 (2 +, 1 −) | −0,032 ± 0,052 (1 +, 2 −; seed 100 −0,10) |
+  | loco_20170215_02 | **−0,078 ± 0,020 (3/3 −)** | −0,024 ± 0,026 (1 +, 2 −) |
+
+- **Okuma:**
+  - z okuyan C, Loco'da üç seed'in üçünde B+Z'den 0,06–0,10 kötü. Bu gürültü değil, sistematik.
+  - E/M/R bu zararı ~üçte birine indiriyor, ama hiçbir oturumda iyileştirme yok. Indy'deki ortalama tek bir kötü seed'den geliyor.
+  - Muhtemel mekanizma: kabul oranı ~%50, yani perturbasyon W_r'yi rastgele yürütüyor. Okuma blokları (`norm_rate`, epochs) varsayılan τ = 100 ms, g = 1'de ayarlandı. Rastgele yürüyüş sistemi bu ayarlanmış çalışma noktasından uzaklaştırıyor ve ortalamada bedel ödetiyor. Loco'nun daha hassas olması bununla uyumlu.
+  - Kısaltılmış Loco val'i çok gürültülü (B+Z seed'ler arası −0,03 ile 0,14). Mutlak sayılar değil, yalnızca eşli farklar anlamlı.
+  - E doygunluğu bazı seed'lerde %17–18'e çıkıyor (seed 100'de %2–4).
+- **Sonuç:** Faz 5 çıkış kriteri 2 ("C, A ve B'den kötü değil") hiçbir sürümde güvenle sağlanmıyor. Tam koşu bekletiliyor. Sorun dinamikten çok W_r'nin öğrenme sinyalinde: perturbasyon kararları gürültüye dayanıyor.
+- **Önerilen sonraki adım:** Eşli perturbasyon karşılaştırması. Deneme ve referans pencerelerinin q'su, aynı veriyi aynı anda gören regülatörsüz bir gölge ajanın (B+Z) q'suyla farklanır: `Δq = q_C − q_gölge`. Böylece "bu pencere zaten zordu" etkisi çıkarılır. §3.5 değişikliği, kullanıcı onayı gerekir. Maliyet: C başına bir ek okuma akışı (~%40–60 daha yavaş).
+
+### KR-029 — Eşli perturbasyon zararı azaltmadı; asıl sorun train → val rejim kayması (→ KR-030)
+- **Koşu:** KR-028 ile aynı protokol, `perturbation.paired: true` (gölge A ajanı, ARCHITECTURE.md §3.5). Ayar seed'leri 100–102, 12 süreç. Loglar: `runs/20261101-18*_paired_*`. B+Z sonuçları KR-028'den (gölge yalnızca C'de var).
+
+  C − B+Z eşli fark (seed 100 / 101 / 102):
+
+  | Oturum | C:perturb (z), eşli | C:perturb+EMR (E), eşli | Kabul oranı |
+  |---|---|---|---|
+  | indy_20170131_02 | +0,009 / −0,021 / −0,069 | −0,041 / +0,005 / −0,063 | %36–49 |
+  | loco_20170215_02 | −0,38 / **−4,68** / −0,13 | **−0,90** / +0,15 / −0,00 | %36–64 |
+
+- **Okuma:**
+  - Eşli karşılaştırma kabul oranını Indy'de %50'nin altına (%36–49) indirdi, yani kararlar artık tamamen rastgele değil. Ama sonuçlar iyileşmedi, Loco'da felaket koşular var.
+  - **Mekanizma (izlerden doğrulandı):** Kötü koşularda regülatörler val'de train'de nadiren görülen bir rejime geçiyor:
+
+    | Koşu | τ medyanı (train → val) | ΔR² |
+    |---|---|---|
+    | Loco perturb s101 | 74 → 314 ms | −4,68 |
+    | Loco perturb s100 | 121 → 291 ms | −0,38 |
+    | Loco EMR s100 | 130 → 347 ms | −0,90 |
+    | Loco perturb s102 | 150 → 134 ms | −0,13 |
+    | Loco EMR s101 | 152 → 63 ms | +0,15 |
+
+  - Val'de karar bloğu ve normalizasyonu donuk (KR-017). Yeni veri z'yi kaydırıyor, z τ'yu kaydırıyor, τ da rezervuar çıktısını donuk okumanın hiç görmediği bir dağılıma taşıyor. **Regülatörler verideki kaymayı temsil kaymasına çevirip büyütüyor.** Araştırma sorusunun tersi yönde, önemli bir bulgu.
+  - Uzun τ'ya kayma özellikle yıkıcı. Kısa τ'ya kayma bir koşuda zararsız, hatta yararlıydı.
+- **Sonuç:** Faz 5 çıkış kriteri 2 sağlanmıyor. Sorun perturbasyon sinyalinin gürültüsünden çok, kapalı döngünün donuk okumayla birleşince ürettiği rejim kayması.
+- **Seçenekler (karar bekliyor):**
+  - (a) Val'de normalizasyonu donmuş tutmamak (`agent.freeze_norm_eval: false`): etiketsiz, nedensel istatistik takibi, ağırlıklar yine donuk. Rejim kaymasını doğrudan hedefler. KR-017 kararını C için gözden geçirir; adil olması için B+Z de aynı ayarla yeniden koşulur.
+  - (b) Regülatör duyarlılığını sınırlamak: W_r'ye L2 / norm sınırı. Kaymayı büyütme kapasitesini azaltır ama regülatörü de zayıflatır.
+  - (c) Faz 5'in "donuk değerlendirme" protokolünü bırakıp Faz 6'daki gibi val'de de öğrenmeyi açık tutmak. Regülatörün amacına (çevrimiçi uyum) en uygunu, ama Faz 5 çıkış kriterinin anlamını değiştirir.
+
+### KR-030 — Nedensel intrinsik homeostatik ölçekleme + asimetrik τ: felaket kaymalar kalktı, C hâlâ B+Z'den iyi değil
+- **Bağlam:** KR-029'daki temsil kayması. Kullanıcı seçimi: (a) uygulanacak, ama Faz 5'in donuk ağırlık protokolü korunacak. (b) gibi W_r köreltilmeyecek, (c)'ye (Faz 6) de geçilmeyecek. Ek olarak uzun τ asimetrik sınırlanacak ve τ'ya bağlı ölçek kayması dengelenecek.
+- **Teşhis ölçümü:** Ayar seed'i 100, train'in ilk 3000 adımı, sabit τ. Değerler τ = 100'ün istatistikleriyle standartlaştırıldı.
+
+  | τ (ms) | θ(τ) | \|V\| ort. | V std | v ortalama kayması (σ) | f'nin standart sapması (σ birimi) |
+  |---|---|---|---|---|---|
+  | 30 | 14,6 | 6,6 | 7,1 | 0,84 | 6,4 |
+  | 100 | 18,2 | 17,5 | 14,3 | 0 | 0,7 |
+  | 300 | 18,9 | 44,9 | 26,0 | 1,96 | 71 |
+  | 500 | 19,0 | 71,1 | 34,4 | 3,80 | 87 |
+
+  - Tablo Indy'ye ait. Loco'da tablo aynı, f sapması τ = 500'de 165σ.
+  - θ(τ) neredeyse sabit, bu yüzden V/θ ölçeği düzeltmez.
+  - Asıl yıkım f'de. τ = 100'de hiç ateşlemeyen nöronların varyansı ≈ 0. Uzun τ'da ateşlemeye başlayınca donuk normda onlarca σ'lık değerler üretiyorlar. KR-029'daki −4,68'in mekanizması bu.
+- **Karar (ARCHITECTURE.md §3.2, §3.5, §8, §11):**
+  1. **Sinaptik ağırlıklardan bağımsız nedensel intrinsik homeostatik ölçekleme** (`agent.freeze_norm_eval: false`, artık varsayılan):
+     - Değerlendirmede tüm ağırlıklar donuk kalır: karar `W_a`, beyincik `W_c`, duygu `W_z`/`W_h` ve `W_r`. Hedef istatistikleri (q, u, s) de donuktur.
+     - Yalnızca okuma bloklarının girdi standartlaştırıcıları güncellenir: karar, beyincik ve duygu uzayının r normu.
+     - Güncelleme etiketsiz ve nedenseldir. μ_t ve σ²_t her adımda yalnızca r_1..r_t ile hesaplanır (üstel ortalama, ρ_n = 0,01). Batch istatistiği ve gelecek bilgisi kullanılmaz.
+     - Literatür çerçevesi: Turrigiano (2008) homeostatik sinaptik ölçekleme (nöron, girdi dağılımını hedef aktivite aralığına çarpımsal olarak ölçekler) ve Carandini & Heeger (2012) kanonik bölücü normalizasyon. İkisi de öğrenilmiş ağırlık yapısını değiştirmeden girdi ölçeğini yeniden ayarlar.
+     - Göz bebeği refleksi gibi etiketsiz duyusal adaptasyona benzer: ne söylendiğini değil, sinyalin ölçeğini ayarlar ve görev etiketine erişmez. Bu yüzden Faz 5'in "donuk ağırlık, etiketsiz değerlendirme" protokolüyle uyumludur. Regülatörün τ modülasyonu karar katmanını doygunluğa sokmaz.
+     - Nedensellik `test_eval_norm_is_causal` ile doğrulandı: gelecekteki x değişse de geçmişteki ŷ'ler birebir aynı kalıyor. Ağırlıkların dondurulduğu `test_eval_norm_weights_frozen` ile doğrulandı.
+  2. **Asimetrik τ eşlemesi** (`regulators.tau_ceiling: 1.2`):
+     - a = (W_r·E)_τ.
+     - Aşağı yön: log τ = log τ_0 + log(τ_0/τ_alt)·tanh(a). τ, 20 ms'lik alt sınıra kadar inebilir.
+     - Yukarı yön: log τ = log τ_0 + log 1,2·tanh(a). Tavan 120 ms.
+     - W_r'ye ceza ya da norm sınırı eklenmedi. g, η, β eşlemesi değişmedi. K4 aralığının içinde kalır.
+     - Yu & Dayan (2005) esinli yorum: beklenmeyen belirsizlikte (dağılım kayması) eski bilgiyi hızlı unutmak (kısa τ) doğru yöndür, belleği uzatmak yanlış yöndür. KR-029'da da uzun τ'ya kayma yıkıcıydı (−4,68), kısa τ'ya kayma zararsızdı (+0,15).
+     - Yukarıdaki tablodaki τ ↔ ölçek bağı da uzun τ'nun temsil ölçeğini şişirdiğini gösteriyor.
+  3. **Varyans koruyucu kazanç** (`reservoir.v_gain_exp: 0.5`):
+     - Okuma vektöründe v = (τ_ref/τ)^0,5 · V.
+     - Yalnızca okumaya uygulanır: dinamik, spike'lar, θ(τ) ve K7 değişmez. Girdi terimini ölçeklemek V'yi ve kalibre θ'yı birlikte ölçeklerdi, spike'lar yine aynı kalırdı. Okuma açısından iki yol eşdeğerdir.
+     - τ = 100'de κ = 1. Sabit τ'lu A/B/B+Z'nin r'si birebir aynı kalır.
+     - p, ayar seed'inin train verisinde seçildi. p = 0,5 iken V std oranı τ ∈ [30, 500] aralığında 0,86–1,06'da kalıyor. p = 1 (tam (1−ᾱ) telafisi) ortalamayı korur ama varyansı 0,38'e indirir.
+- **Testler:** 7 yeni test eklendi (asimetrik τ ×3, κ(τ) ×1, nedensel norm ×3). Toplam 121/121 geçiyor.
+- **Koşu:** KR-029 ile aynı protokol: Indy + Loco, ayar seed'leri 100–102, 20 bin adım, 3 tur, σ = 0,1, M = 500, eşli perturbasyon, val'de donuk ağırlık. **B+Z de aynı nedensel normla yeniden koşuldu.** Loglar: `runs/20261102-0*_nhp_motor_regtrial_seed10*`.
+
+  R² (val):
+
+  | Oturum | Seed | B+Z | C:perturb (z) | C:perturb+EMR (E) |
+  |---|---|---|---|---|
+  | indy_20170131_02 | 100 | 0,325 | 0,325 | 0,334 |
+  | | 101 | 0,306 | 0,314 | 0,322 |
+  | | 102 | 0,281 | 0,272 | 0,266 |
+  | loco_20170215_02 | 100 | 0,191 | 0,135 | 0,154 |
+  | | 101 | 0,141 | 0,128 | 0,152 |
+  | | 102 | 0,177 | 0,099 | 0,166 |
+
+  C − B+Z eşli fark. KR-029 satırında seed başına değerler (donuk norm, simetrik τ), KR-030 satırında ortalama ± std (3 seed):
+
+  | | Indy, z | Indy, E | Loco, z | Loco, E |
+  |---|---|---|---|---|
+  | KR-029 | +0,009 / −0,021 / −0,069 | −0,041 / +0,005 / −0,063 | −0,38 / −4,68 / −0,13 | −0,90 / +0,15 / −0,00 |
+  | **KR-030** | −0,001 ± 0,007 | **+0,004 ± 0,013** | −0,049 ± 0,027 (3/3 kötü) | **−0,012 ± 0,020** |
+
+  - τ medyanı (train → val): en kötü durum 74 → 314 ms idi. Şimdi val'de τ en çok 118 ms.
+  - Val medyanları 47–107 ms arasında; sistem kısa τ tarafını kullanıyor (ör. Loco E s100: 100 → 60 ms).
+  - Kabul oranı %34–53.
+- **Okuma:**
+  - Felaket koşular kalktı: en kötü fark −4,68'den −0,078'e indi. Temsil kayması kapandı.
+  - Nedensel norm B+Z'yi de iyileştirdi (seed 100: Loco 0,139 → 0,191, Indy 0,322 → 0,325). Yani karşılaştırma çıtası da yükseldi.
+  - E okuyan C (E/M/R), iki oturumda da B+Z'den ayırt edilemiyor: Indy +0,004 ± 0,013, Loco −0,012 ± 0,020.
+  - z okuyan C, Loco'da hâlâ 3 seed'in 3'ünde kötü (−0,049). Bu kurulumda E/M/R yumuşatması gerekli görünüyor.
+  - Faz 5 çıkış kriteri 2 ("C, A ve B'den kötü değil") val'de E sürümü için sağlanıyor görünüyor, z sürümü için sağlanmıyor. Hiçbir sürümde üstünlük yok.
+- **Uyarılar:**
+  - Üç değişiklik birlikte uygulandı ve katkıları ayrıştırılmadı. Gerekirse tek tek kapatarak ablation yapılabilir: `tau_ceiling: null`, `v_gain_exp: 0`.
+  - Tavan (1,2) ve p (0,5), KR-029'daki val bulgusuna bakılarak seçildi. Test bölmesine bakılmadı. Rapor seed'lerinde (0–4) ve test bölmesinde doğrulanmadan sonuç iddia edilmez.
+  - K7: tüm konfigürasyonlarda ateşleme oranı 0,011–0,020, yani ρ/2 = 0,025'in altında. Bu KR-014'teki bilinen ihlal; B+Z'de de aynı.
+  - 4 EMR koşusu gece uykusu yüzünden duvar saatinde ~9 saat sürdü. Sonuçlar bundan etkilenmedi.
+- **Faz 5 kapanışı (2026-11-02, kullanıcı kararı):**
+  - **Çözülen:** τ modülasyonunun yarattığı temsil patlaması kapandı. Mekanizma: nedensel normalizasyon (Turrigiano 2008, Carandini & Heeger 2012) ve κ(τ) = (100/τ)^0,5 varyans dengelemesi. En kötü C − B+Z farkı −4,68'den −0,078'e indi. 3 ayar seed'inde E okuyan C − B+Z: Indy +0,004 ± 0,013, Loco −0,012 ± 0,020. z okuyan C: Indy −0,001 ± 0,007, Loco −0,049 ± 0,027.
+  - **Çözülmeyen:** C, B+Z'den iyi değil. Protokol, val'de tüm okuma ağırlıklarını (W_a) donuk tutuyor.
+  - **Hipotez (test edilmedi):** τ değişimi rezervuarın zamansal temsilini kaydırıyor (gecikme/faz dönmesi). Donuk okuma hiperdüzlemi bu kaymayı izleyemiyor. Bu durumda τ regülasyonu ancak okuma da çevrimiçi uyum sağlarsa avantaja dönüşebilir.
+  - Bu hipotez Faz 5 verisiyle kanıtlanmış değil, yalnızca sonucun olası açıklaması. Faz 6'da (KR-031) donuk / sabit η / η_t okuma karşılaştırmasıyla sınanacak.
+  - **Açık:** `experiments/faz5_full.py` (rapor seed'leri 0–4, test bölmesi) yazıldı ve smoke koşusu geçti, ama tam koşu yapılmadı. Faz 5 sonuçları ayar seed'leri ve val ile sınırlı.
+
+---
+
 ## Altyapı
 
 ### KR-022 — Batch'li okuma blokları; tam koşu iki aşamalı, oturum başına CPU süreci
