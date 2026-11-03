@@ -392,6 +392,66 @@ Her kayıt:
 
 ---
 
+## Faz 6 — Çevrimiçi okuma adaptasyonu (2026-11-02)
+
+### KR-031 — Hızlı-yavaş okuma + prequential NLMS + η_t kapısı: uyum her konfigürasyona yardım ediyor, C'nin B+Z'ye üstünlüğü belirsiz
+- **Bağlam:** KR-030 sonrası hipotez: donuk okuma, τ modülasyonunun yarattığı temsil kaymasını izleyemiyor. Kullanıcı spesifikasyonu (ADIM 1–4) uygulandı (ARCHITECTURE.md §3.2, §3.6, §8, §11):
+  - W = W_base + ΔW: W_base train sonunda donar, ΔW_0 = 0.
+  - Prequential akış: ŷ_t skorlanır, sonra e_t ile ΔW güncellenir.
+  - Güncelleme: elastik çapalı NLMS. ΔW ← (1 − λ_pull)·ΔW + η_t·e·φ̃ᵀ/(‖φ̃‖² + ε).
+  - Norm sınırı: ‖ΔW‖_F ≤ ρ‖W_base‖_F.
+  - Üç faktörlü kapı: η_t = η_base + η_mod·min(1, |log(τ_t/τ_0)|/log 2).
+  - Opsiyonel çapa alt-popülasyonu: %20 nöron τ = 100'de sabit.
+- **Değerler** (önceden seçildi, val'de ayarlanmadı): η_base = 1e-3 (train η'sının 1/10'u), η_mod = 9e-3, λ_pull = 1e-3 (yarı ömür ~700 adım), ρ = 0,25, d = 1.
+- **Testler** (`tests/test_faz6.py`, 14 test; toplam 139/139):
+  - Sızıntı yok: y_t değişince ŷ_t ve ŷ_{t+d−1} birebir aynı, ilk değişen ŷ_{t+d} (d = 1, 2).
+  - Aşırı girdi (1e6) ve hata (1e8) altında ‖ΔW‖ hiçbir adımda sınırı aşmıyor. Girdi kesilince ΔW → 0 ve W_base hiç değişmiyor.
+  - η = 0 (fixed ve modulated): B+Z ve C'de tahminler, τ izi ve spike sayıları Faz 5 ile bit düzeyinde aynı.
+  - Ek testler: ΔW'nin τ izini değiştirmediği, kapı değerleri ve çapa maskesinin K1 dizilimini bozmadığı.
+- **Koşu:** `experiments/faz6_trial.py`, `runs/20261102-112732_nhp_motor_faz6_seeds100-101-102`.
+  - KR-029/030 protokolü: 20 bin adım, 3 tur train, val. Test bölmesine bakılmadı.
+  - Her (oturum, seed) için B+Z, C ve C+çapa bir kez eğitildi. Val başında varyantlara kopyalandı. Bu geçerli, çünkü val'de ΔW τ izini değiştirmiyor (testli).
+  - Kontrol: donuk varyantlar KR-030 değerlerini tekrar üretiyor (B+Z 0,325 / 0,306 / 0,281; C Loco 0,154 / 0,152 / 0,166).
+
+  R² (val), ortalama ± std (3 seed):
+
+  | Oturum | B+Z F5 donuk | B+Z F6 sabit η | C F5 donuk | C F6 sabit η | C F6 η_t | C+çapa F6 η_t |
+  |---|---|---|---|---|---|---|
+  | indy_20170131_02 | 0,304 ± 0,018 | 0,308 ± 0,015 | 0,307 ± 0,030 | 0,313 ± 0,026 | 0,317 ± 0,026 | 0,318 ± 0,024 |
+  | loco_20170215_02 | 0,169 ± 0,021 | 0,192 ± 0,014 | 0,157 ± 0,006 | 0,172 ± 0,010 | 0,189 ± 0,013 | 0,206 ± 0,007 |
+
+  Eşli farklar (kötü seed / 3):
+
+  | Karşılaştırma | Indy | Loco |
+  |---|---|---|
+  | B+Z: sabit η − donuk | +0,004 ± 0,003 (0) | +0,023 ± 0,007 (0) |
+  | C: sabit η − donuk | +0,005 ± 0,004 (0) | +0,015 ± 0,004 (0) |
+  | C η_t − C sabit η | +0,005 ± 0,001 (0) | +0,017 ± 0,005 (0) |
+  | C+çapa η_t − C η_t | +0,001 ± 0,004 (1) | +0,016 ± 0,013 (0) |
+  | **C η_t − B+Z F5 donuk** (istenen ana karşılaştırma) | +0,014 ± 0,009 (0) | +0,020 ± 0,016 (1) |
+  | **C sabit η − B+Z sabit η** (aynı η) | +0,005 ± 0,013 (1) | −0,020 ± 0,014 (3) |
+  | **C η_t − B+Z sabit η** | +0,010 ± 0,012 (1) | −0,003 ± 0,012 (1) |
+  | **C+çapa η_t − B+Z sabit η** | +0,011 ± 0,010 (1) | +0,013 ± 0,019 (1) |
+
+- **Adaptasyon istatistikleri:**
+  - η̄: sabit 1e-3; η_t 3,5e-3 (Indy) ve 4,0e-3 (Loco).
+  - ‖ΔW‖/‖W_base‖ son değeri 0,004–0,022. ρ = 0,25 sınırına hiç dayanmadı (%0); fiilen λ_pull sınırlıyor.
+  - Val τ: C'de medyan 85–90 ms, aralık 41–112. Çapa ile Indy'de aralık daralıyor (61–109).
+  - K7: oran 0,009–0,020, tümü ✗ (KR-014'teki bilinen ihlal, değişmedi).
+- **Okuma:**
+  1. **Okuma uyumu her konfigürasyonda yardım ediyor:** 12/12 eşli karşılaştırmada pozitif. ΔW, W_base'in yalnızca %0,4–2'si kadar.
+  2. **KR-030 hipotezi, "C özellikle okuma uyumuna muhtaç", desteklenmiyor:** Aynı sabit η'da uyum B+Z'ye C'den fazla yardım ediyor (Loco +0,023 vs +0,015). C sabit η, Loco'da B+Z sabit η'dan 3/3 seed kötü (−0,020).
+  3. **η_t, sabit η'dan 6/6 seed iyi.** Ancak η_t'nin ortalaması sabit η'nın ~3,5–4 katı. Kazanç kapının zamanlamasından değil, yalnızca daha büyük η'dan geliyor olabilir. Eşlenmiş η kontrolü (sabit η ≈ 4e-3) yapılmadı. Bu yapılmadan "nöromodüle plastisite" etkisi iddia edilemez.
+  4. **İstenen ana karşılaştırma pozitif ama adil değil:** C η_t, donuk B+Z'den Indy +0,014, Loco +0,020. Ancak uyum B+Z'ye de açıldığında fark Indy +0,010 ± 0,012, Loco −0,003 ± 0,012 oluyor. n = 3'te gürültüden ayırt edilemez.
+  5. **Çapa umut verici:** Loco'da 3/3 seed iyileştirdi (+0,016), B+Z sabit η'ya karşı +0,013 ± 0,019. Tek oturum, n = 3; ön bulgu.
+- **Uyarılar:**
+  - Yalnızca ayar seed'leri (100–102), val ve iki kısaltılmış oturum var. Rapor seed'leri ve test bölmesi yok.
+  - PHASES.md'deki asıl Faz 6 sorusu (oturumlar arası kayma, Wilcoxon) henüz koşulmadı. Bu adım 6a (oturum içi).
+  - Koşu duvar saatinde ~9 saat sürdü, beklenen ~1 saatti (büyük olasılıkla uyku/pil). Sonuçlar etkilenmez.
+- **Sıradaki öneri:** Eşlenmiş η kontrolü: B+Z ve C için sabit η = 4e-3. Ayrıca B+Z için de η_t'ye eşdeğer bir zaman profili denenebilir.
+
+---
+
 ## Altyapı
 
 ### KR-022 — Batch'li okuma blokları; tam koşu iki aşamalı, oturum başına CPU süreci

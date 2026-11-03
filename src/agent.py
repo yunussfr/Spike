@@ -14,6 +14,11 @@ Faz 3: adım 1–8, Faz 4: adım 9, Faz 5: adım 2 ve 10 (konfigürasyon C).
  10. regulators.update(q_t − q_gölge,t)              (her adım; M adımlık pencere sonunda perturbasyon kararı)
      Gölge: regülatörsüz eş ajan (A, kendi rezervuar kopyası), aynı veriyi görür (§3.5 eşli karşılaştırma).
 
+Faz 6 (§3.6, §8, KR-031): değerlendirmede `decision.fast.enabled` ise karar okuması W_base + ΔW olur.
+`act` ŷ_t'yi skorlar, ardından `adapt(y_t)` ΔW'yi günceller (önce tahmin, sonra uyum). Üç faktörlü kapı:
+  η_t = min(η_base + η_mod · gate_t, η_üst),  gate_t = min(1, |log(τ_t/τ_0)| / log(gate_scale))
+`eta_mode: fixed` → η_t = η_base. τ_t regülatörün E_{t−1}'den ürettiği τ'dur; sabit τ'da gate = 0.
+
 Bir adım üç çağrıya bölünür: `perceive` (1–3), `act` (4–5), `learn` (6–9). Regülatörler
 sabitken r_t öğrenmeden bağımsızdır; deneyler r'yi bir kez üretip `act`/`learn`'e verebilir.
 C'de (regülatörler açık) bu geçerli değildir: g ve τ z_{t−1}'e bağlıdır, `perceive` her adım çağrılmalı.
@@ -23,6 +28,7 @@ g ve τ örnek başınadır ([B]); η ve β batch ortalamasıdır (güncellemele
 """
 
 import copy
+import math
 from typing import Any
 
 import torch
@@ -81,6 +87,7 @@ class Agent:
                                 reservoir=copy.deepcopy(self.reservoir), device=device)   # K1: sabit kopya
         self._r_shadow: torch.Tensor | None = None                           # [B, 2N]
         self._q_shadow: torch.Tensor | None = None                           # [B]
+        self.fast = dict(cfg["decision"]["fast"])                            # Faz 6 hızlı okuma ayarı
         self.r_t: torch.Tensor | None = None                                 # [B, 2N]
         self.y_hat: torch.Tensor | None = None                               # [B, D_out]
         self.x_hat: torch.Tensor | None = None                               # [B, D_in] x̂_{t+1}
@@ -157,6 +164,30 @@ class Agent:
                 out["trial"] = trial
         return out
 
+    def fast_eta(self) -> float:
+        """Üç faktörlü öğrenme hızı η_t (Faz 6). Kapı τ_t'nin τ_0'dan log-uzaklığıdır (batch ortalaması)."""
+        f = self.fast
+        if f["eta_mode"] == "fixed":
+            return float(f["eta_base"])
+        if f["eta_mode"] != "modulated":
+            raise ValueError(f"decision.fast.eta_mode fixed | modulated olmalı, verilen: {f['eta_mode']}")
+        tau0 = self.cfg["regulators"]["defaults"]["tau"]
+        dist = torch.as_tensor(self.tau, dtype=torch.float32).div(tau0).log().abs().mean()
+        gate = min(1.0, float(dist) / math.log(f["gate_scale"]))
+        return min(f["eta_base"] + f["eta_mod"] * gate, self.cfg["regulators"]["bounds"]["eta"][1])
+
+    @torch.no_grad()
+    def adapt(self, y_t: torch.Tensor | None) -> float:
+        """Faz 6, skor kaydedildikten sonra: e_t = y_t − ŷ_t ile ΔW güncellenir. y_t: [B, D_out] ya da None.
+
+        Döndürür: kullanılan η_t. W_base ve diğer bütün bloklar donuk kalır (K3: e yalnızca karara).
+        """
+        if self.y_hat is None:
+            raise RuntimeError("adapt'ten önce act çağrılmalı")
+        eta = self.fast_eta()
+        self.decision.update_fast(None if y_t is None else y_t - self.y_hat, eta)
+        return eta
+
     @torch.no_grad()
     def errors(self, y_t: torch.Tensor, x_next: torch.Tensor | None) -> dict[str, torch.Tensor]:
         """Öğrenme kapalıyken δ ve e (değerlendirme için)."""
@@ -173,6 +204,8 @@ class Agent:
         for block in (self.decision, self.cerebellum):
             if block is not None and block.norm is not None:
                 block.norm.frozen = frozen and self.freeze_norm_eval
+        if frozen and self.fast["enabled"]:                                  # Faz 6: ΔW_0 = 0, W_base donuk
+            self.decision.start_fast(self.fast["lambda_pull"], self.fast["rho_max"], self.fast["delay"])
         if self.affect is not None:
             self.affect.frozen = frozen                                      # ağırlıklar ve hedef istatistikleri
             self.affect.freeze_norm = self.freeze_norm_eval                  # r normu (freeze_norm_eval)

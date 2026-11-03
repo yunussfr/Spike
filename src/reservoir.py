@@ -11,6 +11,10 @@ geometrik ortalaması 1'dir. Regülatör yalnızca ortak τ'yu verir.
 
 Okuma vektörü r = [f, κ(τ)·V]; κ(τ) = (τ_ref/τ)^p varyans koruyucu kazançtır (§3.2, KR-030).
 Yalnızca okumaya uygulanır: dinamik, spike'lar ve θ(τ) değişmez. p = 0 → κ = 1.
+
+Çapa alt-popülasyonu (Faz 6, KR-031, `anchor_frac`): sabit seed ile seçilen nöronların ortak τ'su
+regülatörden bağımsız τ_ref'te kalır (τ_i = τ_ref·m_i); θ ve κ bu nöronlar için τ_ref'ten okunur.
+anchor_frac = 0 → kapalı, kod yolu öncekiyle aynı.
 """
 
 import math
@@ -59,6 +63,8 @@ class LIFReservoir(nn.Module):
         seed: int,
         v_gain_exp: float = 0.0,
         tau_ref: float = 100.0,
+        anchor_frac: float = 0.0,
+        anchor_seed: int = 0,
     ) -> None:
         super().__init__()
         if c_in > n_in:
@@ -84,6 +90,9 @@ class LIFReservoir(nn.Module):
         self.register_buffer("theta_tau", torch.tensor(sorted(tau_grid)))           # [G]
         self.register_buffer("theta_table", torch.full((len(tau_grid),), theta_init))  # [G]
         self.register_buffer("calibrated", torch.tensor(False))
+        # Çapa maskesi kendi üretecinden: W_in, W_rec, m_i dizilimi değişmez (K1)
+        self.anchor_frac = anchor_frac
+        self.register_buffer("anchor", self._init_anchor(N, anchor_frac, anchor_seed))   # [N] bool
 
         self.V: torch.Tensor | None = None       # [B, N] zar potansiyeli
         self.s: torch.Tensor | None = None       # [B, N] son iç adımın spike'ları
@@ -101,6 +110,7 @@ class LIFReservoir(nn.Module):
             p_rec=r["p_rec"], rho_spec=r["rho_spec"], rec_gain=r["rec_gain"],
             tau_spread=r["tau_spread"], reset=r["reset"], seed=seed,
             v_gain_exp=r["v_gain_exp"], tau_ref=cfg["regulators"]["defaults"]["tau"],
+            anchor_frac=r["anchor_frac"], anchor_seed=seed + r["anchor_seed_offset"],
         )
         if calibrate:
             res.calibrate_from_config(cfg, D_in, seed)
@@ -131,6 +141,15 @@ class LIFReservoir(nn.Module):
         log_s = math.log(tau_spread)
         log_m = (torch.rand(N, generator=gen) * 2 - 1) * log_s                       # [N]
         return (log_m - log_m.mean()).exp()
+
+    @staticmethod
+    def _init_anchor(N: int, frac: float, seed: int) -> torch.Tensor:
+        """Çapa nöronları: ⌊frac·N⌉ tanesi, sabit seed'le. → [N] bool."""
+        if not 0.0 <= frac <= 1.0:
+            raise ValueError(f"anchor_frac [0, 1] aralığında olmalı, verilen: {frac}")
+        mask = torch.zeros(N, dtype=torch.bool)
+        mask[torch.randperm(N, generator=torch.Generator().manual_seed(seed))[: round(frac * N)]] = True
+        return mask
 
     # --- θ(τ) -----------------------------------------------------------------
 
@@ -223,8 +242,8 @@ class LIFReservoir(nn.Module):
         self,
         u: torch.Tensor,                 # [B, T, n_in]
         g_col: torch.Tensor,             # [B, 1]
-        tau_col: torch.Tensor,           # [B, 1] ortak τ (ms)
-        theta: torch.Tensor,             # [B, 1]
+        tau_col: torch.Tensor,           # [B, 1] ortak τ (ms); çapa açıkken [B, N]
+        theta: torch.Tensor,             # [B, 1] ya da [B, N]
     ) -> torch.Tensor:
         """T iç adımı koşar, durumu günceller. Döndürür f = Σ s / T: [B, N]."""
         B, T, _ = u.shape
@@ -266,6 +285,8 @@ class LIFReservoir(nn.Module):
         B = u.shape[0]
         g_col = _as_column(g, B, u)                                         # [B, 1]
         tau_col = _as_column(tau, B, u)                                     # [B, 1]
+        if self.anchor_frac > 0:                                            # çapa: τ_ref'te sabit
+            tau_col = torch.where(self.anchor, torch.full_like(tau_col, self.tau_ref), tau_col)   # [B, N]
         f = self._integrate(u, g_col, tau_col, self.theta(tau_col))         # [B, N]
         v = self.V if self.v_gain_exp == 0 else self.V * (self.tau_ref / tau_col) ** self.v_gain_exp   # [B, N]
         return torch.cat([f, v], dim=-1)                                    # [B, 2N]

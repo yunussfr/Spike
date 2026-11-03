@@ -52,3 +52,16 @@ faz5:                      # Faz 5 çıkış koşusu (experiments/faz5_full.py);
   epochs: 3                # tüm konfigürasyonlar aynı tur sayısıyla (Faz 3–4'teki 12 tur değil)
   max_steps: null          # duman koşusu için oturumu kısaltır
   trace_every: 10          # C izleri (g, τ, η, β, E) her 10 adımda bir kaydedilir
+
+faz6:                      # Faz 6 deneme koşusu (experiments/faz6_trial.py); ayar seed'leri, yalnızca val (KR-031)
+  train: [B+Z, "C:perturb+EMR", "C:perturb+EMR+anchor"]   # her biri bir kez eğitilir; "+anchor" çapa alt-popülasyonunu açar
+  anchor_frac: 0.2         # "+anchor" eğitimlerinde reservoir.anchor_frac
+  variants:                # ad: [eğitilen konfigürasyon, val modu]; mod: frozen (Faz 5) | fixed | modulated
+    "B+Z F5 donuk": [B+Z, frozen]
+    "B+Z F6 sabit η": [B+Z, fixed]
+    "C F5 donuk": ["C:perturb+EMR", frozen]
+    "C F6 sabit η": ["C:perturb+EMR", fixed]
+    "C F6 η_t": ["C:perturb+EMR", modulated]
+    "C+çapa F6 η_t": ["C:perturb+EMR+anchor", modulated]   # opsiyonel: %20 nöron τ = 100'de sabit
+  epochs: 3
+  max_steps: 20000         # KR-029/030 ile aynı kısaltma

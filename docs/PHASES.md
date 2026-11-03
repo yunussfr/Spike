@@ -140,6 +140,10 @@ Her faz bir öncekinin üzerine kurulur. Bir fazın **çıkış kriteri** sağla
 
 **Hedef:** Ana araştırma sorusunu cevaplamak.
 
+**Ara adım 6a (2026-11-02, KR-031):** Okuma uyumu mekanizması, oturumlar arası kaymadan önce oturum içi val'de sınanır.
+- Bileşenler: hızlı-yavaş okuma (W_base + ΔW), prequential NLMS, η_t kapısı, opsiyonel çapa alt-popülasyonu.
+- Koşu: `experiments/faz6_trial.py`, ayar seed'leri 100–102, Indy + Loco.
+
 **Yapılacaklar:**
 - `experiments/ablation.py`: A, B ve C'yi aynı seed'lerle sırayla koşturur.
 - **Kayma protokolü:** Erken tarihli oturumlarda eğit, sonraki oturumlarda test et. Testte öğrenme açık kalsın (çevrimiçi uyum), çünkü regülatörlerin katkısı tam olarak burada görülecek.

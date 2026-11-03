@@ -135,6 +135,12 @@ Sebep: Uzun τ'da bellek spike'lardan çok zar potansiyelinde saklanır. Okuma y
 **Varyans koruyucu kazanç κ(τ).** `(1−ᾱ)` çarpanı olmadığı için V'nin durağan ölçeği τ ile büyür. Ölçüm (ayar seed'i, train): τ 100 → 300'de |V| ~2,5 kat, std ~1,7 kat artar; θ(τ) neredeyse sabittir, bu yüzden V/θ bunu düzeltmez.
 - κ yalnızca okuma vektörüne uygulanır. Dinamik, spike'lar, θ(τ) tablosu ve K7 değişmez. Girdi terimini κ ile ölçeklemek, V'yi ve kalibre θ'yı birlikte ölçekler; spike'lar aynı kalır. Bu yüzden iki yol okuma açısından eşdeğerdir.
 - τ = τ_ref'te κ = 1'dir; sabit τ'lu A ve B'nin r'si değişmez.
+
+**Çapa alt-popülasyonu (opsiyonel, Faz 6, `reservoir.anchor_frac`).**
+- Sabit seed'le (`anchor_seed_offset`, W_in/W_rec diziliminden ayrı üreteç) seçilen ⌊frac·N⌉ nöronun ortak τ'su regülatörden bağımsız olarak τ_ref'te kalır: τ_i = τ_ref·m_i. Bu nöronlarda θ ve κ da τ_ref'ten okunur.
+- θ(τ) tablosu, k-WTA ve K7 değişmez. Tablo nöron başına okunur.
+- Amaç: tüm nöronların zaman temsili aynı anda kaydığında okuma için sabit bir referans bırakmak.
+- `anchor_frac: 0` (varsayılan) → kapalı, kod yolu aynı.
 - p = 0,5, std oranını τ ∈ [30, 500] aralığında 0,86–1,06'da tutar ("varyans koruyucu"). p = 1 (`(1−ᾱ)/(1−ᾱ_ref)`) ortalamayı korur ama varyansı yarıya indirir. p = 0 → kapalı.
 
 **Ateşleme eşiği θ(τ):**
@@ -255,6 +261,20 @@ Perturbasyon penceresi M yalnızca W_r'nin öğrenme protokolüdür. Regülatör
 ```
 - Varsayılan kural, beyincikle aynı **normalize çevrimiçi LMS**'dir (Bölüm 3.3): `ŷ = W_a · φ̃(r)`, `ΔW_a = η · δ · φ̃ᵀ / (ε + ‖φ̃‖²)`. Ham kural config'te `decision.rule: plain` ile seçilebilir. Her iki blok aynı yardımcıyı kullanır (`src/utils/online_norm.py`).
 
+**Hızlı-yavaş okuma (Faz 6, `decision.fast`).** Çerçeve: kararlılık-esneklik ikilemi (Hinton & Plaut 1987, Zenke vd. 2015). Değerlendirmede karar ağırlığı iki bileşene ayrılır:
+```
+W_t        = W_base + ΔW_t          W_base: train sonunda W_a, değerlendirmede hiç değişmez;  ΔW_0 = 0
+ŷ_t        = W_t · φ̃_t              (skor bu tahminden; y_t henüz görülmedi)
+e_t        = y_t − ŷ_t
+ΔW_{t+1}   = (1 − λ_pull) · ΔW_t + η_t · e_{t−d+1} · φ̃_{t−d+1}ᵀ / (‖φ̃_{t−d+1}‖² + ε)      (d ≥ 1)
+‖ΔW‖_F > ρ · ‖W_base‖_F  ⇒  ΔW ← ΔW · ρ‖W_base‖_F / ‖ΔW‖_F
+η_t        = min(η_base + η_mod · gate_t, η_üst),   gate_t = min(1, |log(τ_t/τ_0)| / log(gate_scale))
+```
+- φ̃_t, nedensel normalize edilmiş ve κ(τ) uygulanmış okuma vektörüdür (§3.2, §8).
+- η_t üç faktörlü kuraldaki nöromodülatör kapısıdır (Frémaux & Gerstner 2016). τ_t regülatörün E_{t−1}'den ürettiği τ olduğu için kapı duygu durumuna bağlıdır. `eta_mode: fixed` → η_t = η_base.
+- K3 korunur: ΔW yalnızca karar bloğunun δ'sı ile öğrenir. Beyincik, duygu uzayı ve regülatör ağırlıkları değerlendirmede donuk kalır.
+- `enabled: false` (varsayılan) → Faz 5 protokolü. η_t ≡ 0 iken çıktı Faz 5 ile bit düzeyinde aynıdır (`tests/test_faz6.py`).
+
 ---
 
 ## 4. Modül yapısı
@@ -365,6 +385,12 @@ Her deney üç konfigürasyonla koşulur:
 - Bu, sinaptik ağırlıklardan bağımsız intrinsik homeostatik ölçeklemedir: Turrigiano (2008) sinaptik ölçekleme ve Carandini & Heeger (2012) bölücü normalizasyon esinli. Etiketsiz duyusal adaptasyona (ör. göz bebeği refleksi) benzer (KR-030).
 - Karşılaştırmalar aynı ayarla yapılır: A, B, B+Z ve C ya hepsi donuk ya hepsi nedensel normalizasyonla.
 
+**Prequential değerlendirme (Faz 6).** `decision.fast.enabled: true` iken değerlendirme "önce tahmin et, sonra uyum sağla" sırasıyla akar:
+1. ŷ_t üretilir ve metriğe yazılır.
+2. Ancak bundan sonra e_t hesaplanıp kuyruğa girer. d adım sonra ΔW'ye uygulanır.
+
+ŷ_t, y_t'ye ve sonrasına bağlı olamaz (`test_zero_leakage`). Yalnızca ΔW öğrenir (§3.6). Test bölmesinde hiperparametre seçilmez.
+
 **Ana iddianın kanıtı:** C'nin, kayma testinde A ve B'den istatistiksel olarak anlamlı biçimde iyi olması (5 seed, t-testi ya da Wilcoxon testi).
 
 ## 9. Kodlama kuralları
@@ -391,6 +417,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-02 | Faz 6: değerlendirmede hızlı-yavaş okuma W_base + ΔW (elastik çapa, NLMS, norm sınırı), η_t nöromodülatör kapısı (§3.6), prequential protokol (§8), opsiyonel çapa alt-popülasyonu (§3.2) | Kullanıcı spesifikasyonu (KR-031). Faz 5'te donuk okuma ile C ≈ B+Z; hipotez: τ'nun yarattığı temsil kayması okuma uyumu gerektiriyor |
 | 2026-11-02 | Değerlendirmede nedensel homeostatik normalizasyon (`freeze_norm_eval: false`, §8); asimetrik τ eşlemesi (`tau_ceiling`, §3.5); okuma vektöründe varyans koruyucu κ(τ) (§3.2) | KR-029: regülatörlerin τ'yu kaydırması donuk okuma için temsil kaymasına dönüşüyordu (KR-030) |
 | 2026-11-01 | Perturbasyon eşli karşılaştırmayla: Δq = q_C − q_gölge (§3.5) | Ham q ile kabul oranı ~%50; W_r rastgele yürüyor, z okuyan C Loco'da 3/3 seed kötü (KR-028) |
 | 2026-11-01 | Regülatörler z yerine E/M/R duygu dinamiğinin E'sini okur (§3.5); z girdisi merkezlenir | z her adımda sıçradığı için g/τ/η her 20 ms'de titriyordu (KR-024). E/M/R titremeyi 10–30 kat azaltır; merkezlemesiz E doygun kalıyordu (KR-026) |

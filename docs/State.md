@@ -2,8 +2,38 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Faz 6 başladı (2026-11-02): hızlı-yavaş okuma ve nöromodüle plastisite (KR-031). Faz 5 kullanıcı kararıyla kapandı: temsil kayması çözüldü, C ≈ B+Z (KR-030). `faz5_full.py` tam koşusu (rapor seed'leri) yapılmadı.
+**Şu an:** Faz 6, adım 6a (2026-11-02). Okuma uyumu her konfigürasyona yardım ediyor. C'nin B+Z'ye üstünlüğü belirsiz; η_t etkisi eşlenmiş η kontrolü bekliyor (KR-031). Faz 5 kullanıcı kararıyla kapandı (KR-030). `faz5_full.py` tam koşusu (rapor seed'leri) yapılmadı.
 **Açık kararlar:** θ(τ) tablosu hâlâ "geçici"; `γ_rec` = 1.0 (1/3/10 arası fark gürültü düzeyinde).
+
+---
+
+## 2026-11-02 — Faz 6a: çevrimiçi okuma adaptasyonu (KR-031)
+
+**Yaptıklarım**
+- [x] Kod:
+  - `DecisionReadout`: W_base + ΔW, elastik NLMS, norm sınırı, d adım gecikme.
+  - `Agent.adapt` ve η_t kapısı.
+  - Rezervuarda opsiyonel çapa alt-popülasyonu.
+  - ARCHITECTURE.md §3.2, §3.6, §8, §11.
+- [x] 14 yeni test (sızıntı yok, norm/çapa, η = 0 ile bit eşitliği); toplam 139/139.
+- [x] Koşu `runs/20261102-112732_nhp_motor_faz6_seeds100-101-102` (Indy + Loco, seed 100–102, val). R², ortalama:
+
+  | | B+Z donuk | B+Z sabit η | C donuk | C sabit η | C η_t | C+çapa η_t |
+  |---|---|---|---|---|---|---|
+  | Indy | 0,304 | 0,308 | 0,307 | 0,313 | 0,317 | 0,318 |
+  | Loco | 0,169 | 0,192 | 0,157 | 0,172 | 0,189 | 0,206 |
+
+**Etkisi**
+- Uyum 12/12 eşli karşılaştırmada pozitif.
+- Aynı η'da C, B+Z'den iyi değil: Loco −0,020, 3/3 seed kötü. KR-030'daki "faz kayması" hipotezi desteklenmedi.
+- η_t > sabit η (6/6 seed), ama η̄ ~4 kat büyük; eşlenmiş kontrol gerekiyor.
+- Çapa Loco'da 3/3 seed iyi (+0,016).
+
+**Açık**
+- Eşlenmiş η kontrolü (sabit η ≈ 4e-3).
+- Rapor seed'leri ve test bölmesi.
+- Oturumlar arası kayma protokolü (PHASES Faz 6).
+- Faz 6 kodu commit edilmedi.
 
 ---
 
