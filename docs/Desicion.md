@@ -394,7 +394,7 @@ Her kayıt:
 
 ## Faz 6 — Çevrimiçi okuma adaptasyonu (2026-11-02)
 
-### KR-031 — Hızlı-yavaş okuma + prequential NLMS + η_t kapısı: uyum her konfigürasyona yardım ediyor, C'nin B+Z'ye üstünlüğü belirsiz
+### KR-031 — Hızlı-yavaş okuma + prequential NLMS + η_t kapısı: uyum her konfigürasyona yardım ediyor; eşlenmiş η'da η_t ve C'nin katkısı yok
 - **Bağlam:** KR-030 sonrası hipotez: donuk okuma, τ modülasyonunun yarattığı temsil kaymasını izleyemiyor. Kullanıcı spesifikasyonu (ADIM 1–4) uygulandı (ARCHITECTURE.md §3.2, §3.6, §8, §11):
   - W = W_base + ΔW: W_base train sonunda donar, ΔW_0 = 0.
   - Prequential akış: ŷ_t skorlanır, sonra e_t ile ΔW güncellenir.
@@ -449,6 +449,23 @@ Her kayıt:
   - PHASES.md'deki asıl Faz 6 sorusu (oturumlar arası kayma, Wilcoxon) henüz koşulmadı. Bu adım 6a (oturum içi).
   - Koşu duvar saatinde ~9 saat sürdü, beklenen ~1 saatti (büyük olasılıkla uyku/pil). Sonuçlar etkilenmez.
 - **Sıradaki öneri:** Eşlenmiş η kontrolü: B+Z ve C için sabit η = 4e-3. Ayrıca B+Z için de η_t'ye eşdeğer bir zaman profili denenebilir.
+- **Ek — eşlenmiş η kontrolü (2026-11-03):** `runs/20261103-104631_nhp_motor_etamatch_faz6_seeds100-101-102`.
+  - B+Z ve C için sabit η = 4e-3 (C η_t'nin η̄'sı: Indy 3,5e-3, Loco 4,0e-3). Eski varyantlar önceki koşuyu birebir tekrar etti.
+  - R² (val), ortalama ± std:
+
+    | | B+Z donuk | B+Z sabit 1e-3 | B+Z eşlenmiş 4e-3 | C sabit 1e-3 | C eşlenmiş 4e-3 | C η_t |
+    |---|---|---|---|---|---|---|
+    | Indy | 0,304 ± 0,018 | 0,308 ± 0,015 | 0,313 ± 0,013 | 0,313 ± 0,026 | 0,320 ± 0,023 | 0,317 ± 0,026 |
+    | Loco | 0,169 ± 0,021 | 0,192 ± 0,014 | 0,216 ± 0,008 | 0,172 ± 0,010 | 0,190 ± 0,013 | 0,189 ± 0,013 |
+  - Eşli farklar:
+    - C η_t − C eşlenmiş: Indy −0,002, Loco −0,001. **η_t'nin kazancı tamamen daha büyük ortalama η'dan geliyor; τ kapısının zamanlaması bir şey katmıyor.** (Loco'da η̄ birebir eşleşik; Indy'de eşlenmiş η biraz yüksek.)
+    - C eşlenmiş − B+Z eşlenmiş: Indy +0,006 ± 0,012 (1/3 kötü), Loco −0,025 ± 0,013 (3/3 kötü). Aynı η'da C, B+Z'yi geçmiyor; Loco'da tutarlı biçimde geride.
+    - B+Z eşlenmiş − B+Z donuk: Indy +0,010 (3/3), Loco +0,046 (3/3). Şimdiye kadarki en iyi Loco sonucu (C+çapa η_t 0,206'yı da geçiyor).
+  - Ek gözlemler:
+    - ‖ΔW‖/‖W_base‖ ≤ 0,022, sınıra hiç dayanmıyor; η ayarlanmamış ve daha büyük η hâlâ yardım ediyor olabilir (yalnızca ayar seed'leri/val'de denenecek).
+    - Loco'da R² val'in ilk yarısından ikinci yarısına düşüyor (B+Z donuk 0,207 → 0,136); Indy'de artıyor (0,220 → 0,372). Loco val'inde gerçek bir oturum içi kayma var; uyumun Loco'da daha çok işe yaraması bununla tutarlı.
+  - **Sonuç:** Faz 6a'da "nöromodüle plastisite" (τ kapılı η_t) ve regülatör (C) hipotezleri desteklenmedi. Yardım eden şey sınırlı çevrimiçi okuma uyumunun kendisi; B+Z ile en iyi çalışıyor.
+  - Çapa varyantı bu kontrolde koşulmadı; çapanın Loco kazancının da η'dan bağımsız olup olmadığı açık.
 
 ---
 

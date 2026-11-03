@@ -2,8 +2,35 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Faz 6, adım 6a (2026-11-02). Okuma uyumu her konfigürasyona yardım ediyor. C'nin B+Z'ye üstünlüğü belirsiz; η_t etkisi eşlenmiş η kontrolü bekliyor (KR-031). Faz 5 kullanıcı kararıyla kapandı (KR-030). `faz5_full.py` tam koşusu (rapor seed'leri) yapılmadı.
+**Şu an:** Faz 6, adım 6a (2026-11-03). Eşlenmiş η kontrolü bitti: η_t'nin kazancı yalnızca daha büyük η'dan geliyor, aynı η'da C B+Z'yi geçmiyor (Loco 3/3 kötü). En iyi sonuç B+Z + sabit η = 4e-3 (KR-031 eki). Faz 5 kullanıcı kararıyla kapandı (KR-030). `faz5_full.py` tam koşusu (rapor seed'leri) yapılmadı.
 **Açık kararlar:** θ(τ) tablosu hâlâ "geçici"; `γ_rec` = 1.0 (1/3/10 arası fark gürültü düzeyinde).
+
+---
+
+## 2026-11-03 — Faz 6a: eşlenmiş η kontrolü (KR-031 eki)
+
+**Yaptıklarım**
+- [x] Faz 6a commit edildi (`e3ecbcc`).
+- [x] `faz6.variants` isteğe bağlı üçüncü öğe aldı (`decision.fast` üzerine yazılanlar); config'e iki eşlenmiş η varyantı eklendi.
+- [x] Koşu `runs/20261103-104631_nhp_motor_etamatch_faz6_seeds100-101-102` (Indy + Loco, seed 100–102, val, sabit η = 4e-3). Eski varyantlar birebir tekrar etti.
+
+  | | B+Z donuk | B+Z 1e-3 | B+Z 4e-3 | C 1e-3 | C 4e-3 | C η_t |
+  |---|---|---|---|---|---|---|
+  | Indy | 0,304 | 0,308 | 0,313 | 0,313 | 0,320 | 0,317 |
+  | Loco | 0,169 | 0,192 | 0,216 | 0,172 | 0,190 | 0,189 |
+
+**Etkisi**
+- C η_t ≈ C eşlenmiş η (Indy −0,002, Loco −0,001): τ kapısı katkı vermiyor.
+- C − B+Z (4e-3): Indy +0,006 ± 0,012, Loco −0,025 ± 0,013 (3/3 kötü).
+- B+Z 4e-3 Loco'da +0,046 (3/3), şimdiye kadarki en iyi Loco.
+- Loco val'inde oturum içi kayma var (R² ilk yarı 0,207 → ikinci yarı 0,136); Indy'de yok.
+
+**Açık**
+- η'nın kendisi ayarlanmamış (ΔW sınırdan çok uzak); yalnızca ayar seed'leri/val'de taranmalı, B+Z ve C eşit bütçeyle.
+- Çapanın Loco kazancı η'dan bağımsız mı?
+- Hata/sürpriz tabanlı η kapısı (τ sapması yerine).
+- Oturumlar arası kayma protokolü; rapor seed'leri ve test.
+- Eşlenmiş η değişikliği ve dokümanlar commit edilmedi.
 
 ---
 

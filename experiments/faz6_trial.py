@@ -10,6 +10,8 @@ Her (oturum, seed) işi:
      - frozen: Faz 5 protokolü, W donuk.
      - fixed: W_base + ΔW, sabit η = η_base.
      - modulated: W_base + ΔW, η_t = η_base + η_mod · gate(τ_t).
+     - surprise / affect (KR-032): kapı karar hatası sürprizinden ya da duygu uzayı başından.
+     İsteğe bağlı üçüncü öğe `decision.fast` üzerine yazılır (ör. eşlenmiş η kontrolü: {eta_base: 4e-3}).
      Val'de duygu uzayı ve regülatörler donuk ve z yalnızca r'yi okuyor. Bu yüzden ΔW τ izini değiştirmez
      (`test_adaptation_does_not_change_tau_trace`), kopyalar aynı r akışını görür.
   3. Prequential akış: ŷ_t skorlanır, sonra e_t = y_t − ŷ_t ile ΔW güncellenir (`decision.fast.delay`).
@@ -61,15 +63,16 @@ def build(cfg: dict[str, Any], c: str, s: Any, res: LIFReservoir, seed: int) -> 
 
 @torch.no_grad()
 def evaluate(ag: Agent, mode: str, cfg: dict[str, Any], x: torch.Tensor, y: torch.Tensor,
-             val: slice) -> dict[str, Any]:
-    """Val'de prequential değerlendirme. mode: frozen | fixed | modulated."""
+             val: slice, fast: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Val'de prequential değerlendirme. mode: frozen | fixed | modulated; fast: decision.fast üzerine yazılanlar."""
     ag.fast.update(cfg["decision"]["fast"])
+    ag.fast.update(fast or {})
     ag.fast["enabled"] = mode != "frozen"
     if mode != "frozen":
         ag.fast["eta_mode"] = mode
     ag.set_eval(True)                                                        # ΔW_0 = 0 (açıksa)
     N = ag.reservoir.N
-    preds, taus, etas, dws, rates = [], [], [], [], []
+    preds, taus, etas, dws, rates, gates = [], [], [], [], [], []
     w_base = float(ag.decision.W_a.norm())
     for t in range(val.start, val.stop):
         r = ag.perceive(x[t: t + 1])
@@ -80,6 +83,7 @@ def evaluate(ag: Agent, mode: str, cfg: dict[str, Any], x: torch.Tensor, y: torc
             ag.errors(y[t: t + 1], x[t + 1: t + 2])                          # z, E güncellenir (donuk ağırlık)
         if ag.decision.dW is not None:
             etas.append(ag.adapt(y[t: t + 1]))                               # sonra uyum
+            gates.append(ag.fast_gate)
             dws.append(float(ag.decision.dW.norm()) / w_base)
     P = torch.cat(preds)
     half = len(P) // 2
@@ -94,7 +98,9 @@ def evaluate(ag: Agent, mode: str, cfg: dict[str, Any], x: torch.Tensor, y: torc
         dw = np.array(dws)
         out.update(eta_mean=float(np.mean(etas)), eta_max=float(np.max(etas)),
                    dw_rel_final=float(dw[-1]), dw_rel_max=float(dw.max()),
-                   frac_at_bound=float((dw >= rho_max * (1 - 1e-4)).mean()))
+                   frac_at_bound=float((dw >= rho_max * (1 - 1e-4)).mean()),
+                   gate_mean=float(np.mean(gates)), gate_open=float((np.array(gates) > 0).mean()),
+                   gate_full=float((np.array(gates) >= 1).mean()))
     return out
 
 
@@ -124,10 +130,10 @@ def job(args: tuple[dict[str, Any], str, int, str]) -> dict[str, Any]:
                 if t - tr.start < washout:
                     continue
                 ag.learn(y[t: t + 1], x[t + 1: t + 2] if t + 1 < tr.stop else None)
-        for v, (c_v, mode) in f6["variants"].items():
+        for v, (c_v, mode, *fast) in f6["variants"].items():
             if c_v != c:
                 continue
-            o = evaluate(copy.deepcopy(ag), mode, cfg_s, x, y, val)          # durum train'den sürer
+            o = evaluate(copy.deepcopy(ag), mode, cfg_s, x, y, val, *fast)   # durum train'den sürer
             row.update({f"{v}/{k}": val_ for k, val_ in o.items()})
             print(f"{name} s{seed} {v}: R²(val)={o['r2_val']:.4f}  τ med={o['tau_median']:.0f}"
                   + (f"  η̄={o['eta_mean']:.2e}  ‖ΔW‖/‖W‖={o['dw_rel_final']:.3f}" if "eta_mean" in o else ""),
