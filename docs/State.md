@@ -2,8 +2,32 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Faz 6, adım 6a (2026-11-03). Eşlenmiş η kontrolü bitti: η_t'nin kazancı yalnızca daha büyük η'dan geliyor, aynı η'da C B+Z'yi geçmiyor (Loco 3/3 kötü). En iyi sonuç B+Z + sabit η = 4e-3 (KR-031 eki). Faz 5 kullanıcı kararıyla kapandı (KR-030). `faz5_full.py` tam koşusu (rapor seed'leri) yapılmadı.
+**Şu an:** Faz 6, adım 6a (2026-11-03). Sürpriz / duygu kapılı η eşlenmiş η'ya göre katkı vermedi (KR-032). En güçlü kaldıraç okumanın η'sı: sabit η = 1,6e-2'de bile R² artmaya devam ediyor (Loco 0,260). τ kapısı ve C de katkısız (KR-031). Faz 5 kullanıcı kararıyla kapandı (KR-030).
 **Açık kararlar:** θ(τ) tablosu hâlâ "geçici"; `γ_rec` = 1.0 (1/3/10 arası fark gürültü düzeyinde).
+
+---
+
+## 2026-11-03 — Faz 6a: sürpriz / duygu kapılı η (KR-032)
+
+**Yaptıklarım**
+- [x] `decision.fast.eta_mode`: `surprise` (‖δ‖² kısa/uzun EMA oranı) ve `affect` (duygu uzayı `s` başı); rezervuar sabit τ = 100, varsayılan kapalı. ARCHITECTURE.md değişmedi (onay bekliyor).
+- [x] Yeni testler `tests/test_faz6.py`'de (sıfır sızıntı, kapı sınırı, hata adımı, η = 0 bit eşitliği).
+- [x] Koşu `runs/20261103-121154_nhp_motor_surprise_faz6_seeds100-101-102` (B+Z, Indy + Loco, seed 100–102, val).
+
+  | | donuk | η 2e-3 | η 4e-3 | η 8e-3 | η 1,6e-2 | sürpriz η | affect η |
+  |---|---|---|---|---|---|---|---|
+  | Indy | 0,304 | 0,310 | 0,313 | 0,320 | 0,335 | 0,309 | 0,312 |
+  | Loco | 0,169 | 0,203 | 0,216 | 0,232 | 0,260 | 0,209 | 0,209 |
+
+**Etkisi**
+- Eşlenmiş η'ya göre: sürpriz Indy −0,005 (3/3 kötü), Loco −0,002; affect Indy −0,001, Loco −0,002. Kapılar katkı vermiyor.
+- Sabit η arttıkça R² tekdüze artıyor, 1,6e-2'de tepe yok; Loco donuğa göre +0,091 (3/3).
+
+**Açık**
+- η ve λ_pull taraması (ayar seed'leri, val; B+Z ve C eşit bütçe); kapılar ayarlı η'da yeniden denenmeli.
+- Darboğaz ölçümü (Wiener filtresi / ridge / NLMS) ve K7 ateşleme oranı.
+- Oturumlar arası kayma protokolü; rapor seed'leri ve test.
+- KR-032 değişiklikleri commit edilmedi.
 
 ---
 

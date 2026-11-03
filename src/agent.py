@@ -18,6 +18,12 @@ Faz 6 (§3.6, §8, KR-031): değerlendirmede `decision.fast.enabled` ise karar o
 `act` ŷ_t'yi skorlar, ardından `adapt(y_t)` ΔW'yi günceller (önce tahmin, sonra uyum). Üç faktörlü kapı:
   η_t = min(η_base + η_mod · gate_t, η_üst),  gate_t = min(1, |log(τ_t/τ_0)| / log(gate_scale))
 `eta_mode: fixed` → η_t = η_base. τ_t regülatörün E_{t−1}'den ürettiği τ'dur; sabit τ'da gate = 0.
+Deneysel kapılar (KR-032; rezervuar sabit τ'da kalır, yalnızca η değişir):
+  surprise: P_t = ‖δ_t‖² (batch ortalaması), kısa/uzun EMA oranı ρ_t = EMA_k(P)/EMA_u(P),
+            gate_t = clip((ρ_t − 1)/(surprise_scale − 1), 0, 1)   — hata beklenmedik biçimde artınca açılır.
+  affect:   duygu uzayının standart ölçekli başı (`affect_head`, ör. ŝ: kötüleşme eğilimi; yalnızca r_t'den),
+            gate_t = clip(ĥ_t / affect_scale, 0, 1)                — z davranışa yalnızca η üzerinden etki eder.
+Kapı ŷ_t skorlandıktan sonra hesaplanır; ŷ_t'yi etkilemez.
 
 Bir adım üç çağrıya bölünür: `perceive` (1–3), `act` (4–5), `learn` (6–9). Regülatörler
 sabitken r_t öğrenmeden bağımsızdır; deneyler r'yi bir kez üretip `act`/`learn`'e verebilir.
@@ -88,6 +94,9 @@ class Agent:
         self._r_shadow: torch.Tensor | None = None                           # [B, 2N]
         self._q_shadow: torch.Tensor | None = None                           # [B]
         self.fast = dict(cfg["decision"]["fast"])                            # Faz 6 hızlı okuma ayarı
+        self.fast_gate = 0.0                                                 # son η_t kapısı ∈ [0, 1] (log için)
+        self._sur_short: float | None = None                                 # EMA_k(‖δ‖²), surprise kapısı
+        self._sur_long: float | None = None                                  # EMA_u(‖δ‖²)
         self.r_t: torch.Tensor | None = None                                 # [B, 2N]
         self.y_hat: torch.Tensor | None = None                               # [B, D_out]
         self.x_hat: torch.Tensor | None = None                               # [B, D_in] x̂_{t+1}
@@ -164,17 +173,52 @@ class Agent:
                 out["trial"] = trial
         return out
 
-    def fast_eta(self) -> float:
-        """Üç faktörlü öğrenme hızı η_t (Faz 6). Kapı τ_t'nin τ_0'dan log-uzaklığıdır (batch ortalaması)."""
+    def fast_eta(self, delta: torch.Tensor | None = None) -> float:
+        """Üç faktörlü öğrenme hızı η_t (Faz 6). delta: [B, D_out] skorlanmış adımın hatası (surprise için).
+
+        modulated: kapı τ_t'nin τ_0'dan log-uzaklığı. surprise / affect: KR-032 (modül docstring'i).
+        """
         f = self.fast
-        if f["eta_mode"] == "fixed":
+        mode = f["eta_mode"]
+        if mode == "fixed":
+            self.fast_gate = 0.0
             return float(f["eta_base"])
-        if f["eta_mode"] != "modulated":
-            raise ValueError(f"decision.fast.eta_mode fixed | modulated olmalı, verilen: {f['eta_mode']}")
-        tau0 = self.cfg["regulators"]["defaults"]["tau"]
-        dist = torch.as_tensor(self.tau, dtype=torch.float32).div(tau0).log().abs().mean()
-        gate = min(1.0, float(dist) / math.log(f["gate_scale"]))
+        if mode == "modulated":
+            tau0 = self.cfg["regulators"]["defaults"]["tau"]
+            dist = torch.as_tensor(self.tau, dtype=torch.float32).div(tau0).log().abs().mean()
+            gate = min(1.0, float(dist) / math.log(f["gate_scale"]))
+        elif mode == "surprise":
+            gate = self._surprise_gate(delta)
+        elif mode == "affect":
+            gate = self._affect_gate()
+        else:
+            raise ValueError(f"decision.fast.eta_mode fixed | modulated | surprise | affect olmalı, verilen: {mode}")
+        self.fast_gate = gate
         return min(f["eta_base"] + f["eta_mod"] * gate, self.cfg["regulators"]["bounds"]["eta"][1])
+
+    def _surprise_gate(self, delta: torch.Tensor | None) -> float:
+        """Karar hatası gücünün kısa/uzun EMA oranı → [0, 1]. delta None ise durum değişmez."""
+        f = self.fast
+        if delta is not None:
+            p = float((delta ** 2).sum(dim=-1).mean())                       # ‖δ_t‖², batch ortalaması
+            if self._sur_short is None:
+                self._sur_short = self._sur_long = p
+            else:
+                self._sur_short += f["surprise_ema_short"] * (p - self._sur_short)
+                self._sur_long += f["surprise_ema_long"] * (p - self._sur_long)
+        if self._sur_short is None or self._sur_long <= 0:
+            return 0.0
+        ratio = self._sur_short / self._sur_long
+        return min(1.0, max(0.0, (ratio - 1.0) / (f["surprise_scale"] - 1.0)))
+
+    def _affect_gate(self) -> float:
+        """Duygu uzayının standart ölçekli başı (yalnızca r_t'den) → [0, 1]. Pozitif yön: kötüleşme/belirsizlik."""
+        if self.affect is None:
+            raise ValueError("eta_mode: affect duygu uzayı gerektirir (affect.enabled: true)")
+        if self.affect.heads is None:
+            return 0.0
+        head = float(self.affect.heads[:, HEADS.index(self.fast["affect_head"])].mean())
+        return min(1.0, max(0.0, head / self.fast["affect_scale"]))
 
     @torch.no_grad()
     def adapt(self, y_t: torch.Tensor | None) -> float:
@@ -184,8 +228,9 @@ class Agent:
         """
         if self.y_hat is None:
             raise RuntimeError("adapt'ten önce act çağrılmalı")
-        eta = self.fast_eta()
-        self.decision.update_fast(None if y_t is None else y_t - self.y_hat, eta)
+        delta = None if y_t is None else y_t - self.y_hat                    # [B, D_out]
+        eta = self.fast_eta(delta)
+        self.decision.update_fast(delta, eta)
         return eta
 
     @torch.no_grad()
@@ -206,6 +251,7 @@ class Agent:
                 block.norm.frozen = frozen and self.freeze_norm_eval
         if frozen and self.fast["enabled"]:                                  # Faz 6: ΔW_0 = 0, W_base donuk
             self.decision.start_fast(self.fast["lambda_pull"], self.fast["rho_max"], self.fast["delay"])
+            self.fast_gate, self._sur_short, self._sur_long = 0.0, None, None
         if self.affect is not None:
             self.affect.frozen = frozen                                      # ağırlıklar ve hedef istatistikleri
             self.affect.freeze_norm = self.freeze_norm_eval                  # r normu (freeze_norm_eval)

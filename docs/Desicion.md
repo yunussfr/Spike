@@ -467,6 +467,31 @@ Her kayıt:
   - **Sonuç:** Faz 6a'da "nöromodüle plastisite" (τ kapılı η_t) ve regülatör (C) hipotezleri desteklenmedi. Yardım eden şey sınırlı çevrimiçi okuma uyumunun kendisi; B+Z ile en iyi çalışıyor.
   - Çapa varyantı bu kontrolde koşulmadı; çapanın Loco kazancının da η'dan bağımsız olup olmadığı açık.
 
+
+### KR-032 — Sürpriz / duygu kapılı η (rezervuar sabit τ): eşlenmiş η'ya göre katkı yok; asıl kaldıraç η'nın kendisi
+- **Bağlam:** KR-031 ekinden sonra kullanıcının önerisi: rezervuar B+Z'deki gibi sabit kalsın (τ = 100), z yalnızca okumanın öğrenme hızına bağlansın; hata beklenmedik biçimde artınca hızlı, her şey yolundaysa yavaş öğren.
+- **Uygulama (deneysel, ARCHITECTURE.md değişmedi — onay bekliyor):** `decision.fast.eta_mode` iki yeni değer aldı, varsayılan kapalı:
+  - `surprise`: ‖δ‖²'nin kısa (0,1) / uzun (0,002) EMA oranı ρ_t; kapı = clip((ρ_t − 1)/(3 − 1), 0, 1).
+  - `affect`: duygu uzayının standart ölçekli `s` başı (kötüleşme eğilimi); kapı = clip(ŝ/2, 0, 1).
+  - η_t = η_base + η_mod·kapı = 1e-3 + 1,5e-2·kapı (K4 sınırında). Kapı ŷ_t skorlandıktan sonra hesaplanır.
+  - Testler: sıfır sızıntı, kapı [0, 1], hata adımında açılıp kapanma, η = 0 → Faz 5 bit eşitliği.
+- **Koşu:** `runs/20261103-121154_nhp_motor_surprise_faz6_seeds100-101-102` (B+Z eğitimi, Indy + Loco, seed 100–102, val). Sabit η eğrisi 2e-3 … 1,6e-2.
+  - R² (val), ortalama ± std:
+
+    | | donuk | η 2e-3 | η 4e-3 | η 8e-3 | η 1,6e-2 | sürpriz η | affect η |
+    |---|---|---|---|---|---|---|---|
+    | Indy | 0,304 ± 0,018 | 0,310 ± 0,014 | 0,313 ± 0,013 | 0,320 ± 0,012 | 0,335 ± 0,011 | 0,309 ± 0,011 | 0,312 ± 0,015 |
+    | Loco | 0,169 ± 0,021 | 0,203 ± 0,011 | 0,216 ± 0,008 | 0,232 ± 0,007 | 0,260 ± 0,006 | 0,209 ± 0,008 | 0,209 ± 0,009 |
+  - Eşlenmiş η karşılaştırması (seed başına, sabit η eğrisinin log η'da kapının η̄'sına enterpolasyonu; η̄ ≈ 2,8–4,1e-3):
+    - sürpriz η − eşlenmiş: Indy −0,005 ± 0,002 (3/3 kötü), Loco −0,002 ± 0,002 (2/3 kötü).
+    - affect η − eşlenmiş: Indy −0,001 ± 0,003 (1/3 kötü), Loco −0,002 ± 0,003 (2/3 kötü).
+  - Kapı istatistikleri: sürpriz kapısı adımların ~%25–30'unda açık, ~%10'unda tam açık; affect kapısı %40–80 açık, hiç tam açılmıyor.
+- **Sonuç:**
+  - Hipotez desteklenmedi: η'yı zamana göre dağıtmak (sürpriz ya da z ile) aynı ortalama η'lı sabit kuraldan iyi değil; sürpriz kapısı Indy'de 3/3 hafif kötü.
+  - Asıl bulgu: R², sabit η ile tekdüze artıyor ve 1,6e-2'de hâlâ tepe yapmadı (Loco donuğa göre +0,091, Indy +0,031; 3/3). ‖ΔW‖/‖W_base‖ ≤ 0,06, ρ = 0,25 sınırından uzak. Okuma uyumu ciddi biçimde az ayarlı; önce η (ve λ_pull) taranmalı, kapılar bundan sonra yeniden değerlendirilmeli (daha yüksek η'da "yavaş öğren, eskiyi koru" tarafının değeri artabilir).
+  - Loco'da η 1,6e-2 ile bile R² val'in ilk yarısından ikinciye düşüyor (0,325 → 0,208); kayma tam izlenemiyor.
+- **Uyarılar:** 3 ayar seed'i, yalnızca val, oturum içi. η taraması da val'de bir ayar; sonuçlar rapor seed'leri ve test bölmesinde bir kez doğrulanmalı.
+
 ---
 
 ## Altyapı

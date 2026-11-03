@@ -49,10 +49,10 @@ def trained(config: str = "B+Z", **fast) -> tuple[Agent, torch.Tensor, torch.Ten
 
 # --- 1. Nedensellik: y_t, ŷ_t'yi etkileyemez ---------------------------------------------
 
-@pytest.mark.parametrize("delay", [1, 2])
-def test_zero_leakage(delay: int) -> None:
-    """y_t değişince ŷ_t (ve d − 1 adım sonrası) birebir aynı; ilk etki ŷ_{t+d}'de."""
-    ag, x, y = trained(enabled=True, eta_base=0.1, delay=delay)
+@pytest.mark.parametrize("delay,mode", [(1, "fixed"), (2, "fixed"), (1, "surprise"), (2, "surprise"), (1, "affect")])
+def test_zero_leakage(delay: int, mode: str) -> None:
+    """y_t değişince ŷ_t (ve d − 1 adım sonrası) birebir aynı; ilk etki ŷ_{t+d}'de (kapılı η dahil)."""
+    ag, x, y = trained(enabled=True, eta_mode=mode, eta_base=0.1, eta_mod=0.05, delay=delay)
     t0 = 22
     y2 = y.clone()
     y2[t0] = y2[t0] + 10.0                                                     # yalnızca y_t0 farklı
@@ -109,7 +109,7 @@ def test_w_base_and_other_blocks_frozen_during_adaptation() -> None:
 # --- 3. η = 0 → Faz 5 ile bit düzeyinde aynı ------------------------------------------------
 
 @pytest.mark.parametrize("config", ["B+Z", "C"])
-@pytest.mark.parametrize("mode", ["fixed", "modulated"])
+@pytest.mark.parametrize("mode", ["fixed", "modulated", "surprise", "affect"])
 def test_eta_zero_equals_faz5(config: str, mode: str) -> None:
     """η_t = 0: tahminler ve τ izi donuk Faz 5 değerlendirmesiyle birebir aynı (K7 oranı dahil)."""
     ag, x, y = trained(config)
@@ -151,6 +151,46 @@ def test_eta_gate() -> None:
     assert ag.fast_eta() <= ag.cfg["regulators"]["bounds"]["eta"][1]           # K4 üst sınırı
     ag.fast["eta_mode"] = "fixed"
     assert ag.fast_eta() == pytest.approx(1e-3)
+
+
+def test_surprise_gate() -> None:
+    """KR-032: sabit hata → kapı kapalı; ani hata artışı → tam açık; hata normale dönünce kapanır."""
+    ag = make_agent(eta_mode="surprise", eta_base=1e-3, eta_mod=9e-3, surprise_ema_short=0.5,
+                    surprise_ema_long=0.01, surprise_scale=3.0)
+    calm = torch.ones(1, D_OUT)                                                # [1, D_out]
+    for _ in range(50):
+        assert ag.fast_eta(calm) == pytest.approx(1e-3)
+    assert ag.fast_gate == 0.0
+    assert ag.fast_eta(calm * 10.0) == pytest.approx(1e-2)                    # sürpriz → tam açık
+    assert ag.fast_gate == 1.0
+    assert ag.fast_eta(None) == pytest.approx(1e-2)                            # etiket yok: durum değişmez
+    gates = []
+    for _ in range(200):
+        ag.fast_eta(calm)
+        gates.append(ag.fast_gate)
+    assert all(0.0 <= g <= 1.0 for g in gates)
+    assert gates[-1] == 0.0                                                    # kapandı
+    ag.fast.update(eta_mod=1.0)
+    ag.fast_eta(calm * 100.0)
+    assert ag.fast_eta(calm * 100.0) <= ag.cfg["regulators"]["bounds"]["eta"][1]   # K4 üst sınırı
+
+
+def test_affect_gate() -> None:
+    """KR-032: kapı duygu uzayının standart ölçekli başını okur (yalnızca r_t'den), [0, 1]'e kırpılır."""
+    ag = make_agent(eta_mode="affect", eta_base=1e-3, eta_mod=9e-3, affect_head="s", affect_scale=2.0)
+    assert ag.fast_eta() == pytest.approx(1e-3)                                # baş henüz yok → kapalı
+    for head, gate in [(3.0, 1.0), (1.0, 0.5), (-1.0, 0.0)]:
+        ag.affect.heads = torch.tensor([[0.0, 0.0, head]])                     # [B, 3] = (q̂, û, ŝ)
+        ag.fast_eta()
+        assert ag.fast_gate == pytest.approx(gate)
+    cfg = make_agent().cfg
+    cfg["affect"]["enabled"] = False
+    cfg["agent"]["config"] = "A"
+    cfg["decision"]["fast"].update(eta_mode="affect")
+    a = Agent(cfg, D_in=D_IN, D_out=D_OUT, seed=0,
+              reservoir=LIFReservoir.from_config(cfg, D_in=D_IN, seed=0, calibrate=False))
+    with pytest.raises(ValueError):
+        a.fast_eta()
 
 
 # --- Çapa alt-popülasyonu -------------------------------------------------------------------
