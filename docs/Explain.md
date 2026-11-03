@@ -30,7 +30,7 @@ $$V_i(k) = \alpha_i\, V_i(k-1) + c_i\, I_i(k), \qquad \alpha_i = e^{-dt/\tau_i},
 - Girdi akımının önünde $(1-\alpha)$ çarpanı **yoktur** (KR-001). Onun yerine $c_i$ denge katsayısı vardır: sabit girdide tüm nöronlar aynı seviyeye çıkar, sadece hızları farklıdır.
 - $f$ (eşik) potansiyelin *içinde* değil, potansiyelden *sonra* uygulanır: önce $V$ güncellenir, sonra $V > \theta(\tau)$ olanlardan en fazla $k$ tanesi ateşler, ateşleyenlerden $\theta$ çıkarılır.
 
-**2. Öğrenme nasıl gerçekleşir?** Ridge regresyon bu projede sistemin öğrenme kuralı **değildir**. K2 kuralı gereği sistem tek hamlede çözüm (ridge) ya da gradyan (Adam/SGD) kullanmaz; okuma blokları her adımda yerel bir kuralla, adım adım öğrenir (aşağıda "Normalize LMS"). Ridge'i yalnızca bir **üst sınır referansı** olarak hesaplarız: "aynı rezervuar çıktılarıyla en iyi doğrusal okuma ne kadar iyi olabilirdi?" Yerel kuralın sonucu buna ne kadar yakınsa, kural o kadar iyi çalışıyor demektir.
+**2. Öğrenme nasıl gerçekleşir?** Ridge regresyon bu projede sistemin öğrenme kuralı **değildir**. Okuma blokları tasarım gereği tek hamlede çözüm (ridge) ya da gradyan (Adam/SGD) kullanmaz; okuma blokları her adımda yerel bir kuralla, adım adım öğrenir (aşağıda "Normalize LMS"). Ridge'i yalnızca bir **üst sınır referansı** olarak hesaplarız: "aynı rezervuar çıktılarıyla en iyi doğrusal okuma ne kadar iyi olabilirdi?" Yerel kuralın sonucu buna ne kadar yakınsa, kural o kadar iyi çalışıyor demektir.
 
 ---
 
@@ -56,7 +56,7 @@ Normalize kural iki şey yapar:
 1. **Standartlaştırma:** her öznitelik, kendi geçmişinin üstel ortalaması $\mu$ ve varyansı $\sigma^2$ ile ölçeklenir: $\tilde\varphi = (\varphi - \mu)/\sqrt{\sigma^2 + \varepsilon}$, sonuna sabit bir bias girişi $b = \sqrt{F}$ eklenir. $\mu$ ve $\sigma^2$ yalnızca o ana kadar görülen veriden hesaplanır (nedensel).
 2. **Adımı normalize etme:** $\Delta W = \eta \cdot \text{hata} \cdot \tilde\varphi^\top / (\varepsilon + \|\tilde\varphi\|^2)$. Böylece adım büyüklüğü girdinin ölçeğinden bağımsız olur; $\eta$ artık "hatanın ne kadarını bu adımda düzelt" anlamına gelir.
 
-Kural hâlâ **yereldir** (K2): bir ağırlığın değişimi yalnızca kendi girdisine ve çıktının hatasına bağlıdır, geri yayılım yoktur.
+Kural hâlâ **yereldir**: bir ağırlığın değişimi yalnızca kendi girdisine ve çıktının hatasına bağlıdır, geri yayılım yoktur.
 
 # Karar Bloğu (Faz 3)
 

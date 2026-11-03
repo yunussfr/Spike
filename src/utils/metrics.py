@@ -1,6 +1,6 @@
 """Değerlendirme yardımcıları: çevrimdışı ridge okuma (üst sınır referansı) ve hata ölçüleri.
 
-Ridge burada yalnızca karşılaştırma/teşhis içindir; sistemin öğrenme kuralı değildir (K2).
+Ridge burada yalnızca karşılaştırma/teşhis içindir; sistemin öğrenme kuralı değildir.
 """
 
 import torch

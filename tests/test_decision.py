@@ -1,4 +1,4 @@
-"""Faz 3: DecisionReadout testleri (K2, K3)."""
+"""Faz 3: DecisionReadout testleri (K3)."""
 
 import copy
 import inspect

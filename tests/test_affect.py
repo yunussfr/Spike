@@ -1,4 +1,4 @@
-"""Faz 4: AffectSpace ve AffectTargets testleri (K2, K3)."""
+"""Faz 4: AffectSpace ve AffectTargets testleri (K3)."""
 
 import copy
 import inspect

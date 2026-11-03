@@ -25,9 +25,10 @@ Sabit (eğitilmeyen) bir spiking projeksiyon bloğu üzerine, yalnızca yerel ku
 - Matrisler checkpoint'e kaydedilir. Aynı seed ve aynı config her zaman aynı matrisleri üretmelidir.
 - Bu blokta değişebilen tek şey, regülatörlerden gelen **g** (girdi kazancı) ve **τ** (sızıntı zaman sabiti) değerleridir.
 
-### K2 — Global geri yayılım yok
-- Hiçbir modül `loss.backward()` kullanmaz. Tüm güncellemeler `torch.no_grad()` içinde, açık formüllerle yapılır.
-- Her güncelleme **yereldir**: bir ağırlığın değişimi yalnızca o ağırlığın girdisine (s(t)), çıktısına ve bir hata sinyaline bağlıdır.
+### K2 — (kaldırıldı, 2026-11-03)
+- Eski kural ("global geri yayılım yok, tüm güncellemeler yerel") kullanıcı kararıyla değişmez kurallardan çıkarıldı (KR-033). Numaralar korunur; K3–K8'in adları değişmez.
+- Mevcut okuma blokları (§3.3, §3.4, §3.6) açık formüllü yerel kurallarla öğrenmeye devam eder; bu artık bir değişmez değil, bir tasarım seçimidir.
+- Tavan/referans modelleri (ör. BPTT ile eğitilen GRU, §8) otomatik türev kullanabilir. Bunlar ajanın parçası değildir.
 
 ### K3 — İki öğrenme sinyali birbirine karışmaz
 | Sinyal | Tanım | Kimi eğitir | Kimi eğitmez |
@@ -166,7 +167,7 @@ e(t+1) = x(t+1) − x̂(t+1)
 ΔW_c   = η · e(t+1) · φ̃ᵀ / (ε + ‖φ̃‖²)     # normalize LMS
 ```
 - `b = √F` sabit bias girişidir (`bias_scale: auto`); `F`, öznitelik sayısıdır.
-- Hâlâ yereldir (K2): bir ağırlığın değişimi yalnızca kendi girdisine ve e'ye bağlıdır; `μ`, `σ²` gelecekten bilgi taşımaz (K6). Yalnızca `W_c` değişir.
+- Hâlâ yereldir: bir ağırlığın değişimi yalnızca kendi girdisine ve e'ye bağlıdır; `μ`, `σ²` gelecekten bilgi taşımaz (K6). Yalnızca `W_c` değişir.
 - Aynı kural karar bloğu için de geçerlidir (Bölüm 3.6), ortak yardımcı kullanılır.
 - Ham kural config'te `cerebellum.rule: plain` ile hâlâ seçilebilir (karşılaştırma için).
 
@@ -403,7 +404,6 @@ Her deney üç konfigürasyonla koşulur:
 ## 10. Yasaklar
 
 - Projeksiyon bloğu ağırlıklarını güncellemek (K1).
-- `loss.backward()` ya da herhangi bir otomatik türev kullanımı (K2).
 - δ'yı beyinciğe ya da e'yi karar bloğuna vermek (K3).
 - Regülatörlerin dört parametre dışında bir şeyi değiştirmesi (K4).
 - Beyinciğin tahmin anında gelecekteki girdiyi görmesi (K6).
@@ -417,6 +417,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-03 | K2 (global geri yayılım yok) kaldırıldı; numara boş bırakıldı | Kullanıcı kararı (KR-033). Tavan ölçümü için BPTT ile eğitilen GRU referansı gerekiyor; okuma blokları yerel kalır |
 | 2026-11-02 | Faz 6: değerlendirmede hızlı-yavaş okuma W_base + ΔW (elastik çapa, NLMS, norm sınırı), η_t nöromodülatör kapısı (§3.6), prequential protokol (§8), opsiyonel çapa alt-popülasyonu (§3.2) | Kullanıcı spesifikasyonu (KR-031). Faz 5'te donuk okuma ile C ≈ B+Z; hipotez: τ'nun yarattığı temsil kayması okuma uyumu gerektiriyor |
 | 2026-11-02 | Değerlendirmede nedensel homeostatik normalizasyon (`freeze_norm_eval: false`, §8); asimetrik τ eşlemesi (`tau_ceiling`, §3.5); okuma vektöründe varyans koruyucu κ(τ) (§3.2) | KR-029: regülatörlerin τ'yu kaydırması donuk okuma için temsil kaymasına dönüşüyordu (KR-030) |
 | 2026-11-01 | Perturbasyon eşli karşılaştırmayla: Δq = q_C − q_gölge (§3.5) | Ham q ile kabul oranı ~%50; W_r rastgele yürüyor, z okuyan C Loco'da 3/3 seed kötü (KR-028) |

@@ -8,7 +8,7 @@ Hedefler (AffectTargets, δ ve e'yi yalnızca OKUR — K3):
   s = EMA_kısa(u) − EMA_uzun(u)   eğilim (iyileşme < 0 < kötüleşme)
 Hedefler çevrimiçi standartlaştırılır (ölçekleri çok farklı); başlar standart hedefi tahmin eder.
 
-Öğrenme (yerel, açık formül, autograd yok — K2). ε_h = hedef̃ − baş:
+Öğrenme (yerel, açık formül, autograd yok). ε_h = hedef̃ − baş:
   ΔW_h = η_h · ε_h · [z, 1]ᵀ / (ε + ‖[z, 1]‖²)
   ΔW_z = η_z · ((W_hᵀ ε_h)[:k] ⊙ (1 − z²)) · φ̃ᵀ / (ε + ‖φ̃‖²)
 Başlardan W_z'ye hata yalnızca tek bir doğrusal katman (W_h) üzerinden gelir.

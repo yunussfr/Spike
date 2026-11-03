@@ -4,8 +4,6 @@ Yeni modüller eklendikçe (Faz 2+) ilgili kural kontrolleri buraya eklenir.
 """
 
 import math
-import re
-from pathlib import Path
 
 import pytest
 import torch
@@ -14,7 +12,6 @@ from src.encoder import SpikeEncoder
 from src.reservoir import LIFReservoir
 from tests.conftest import CFG, D_IN
 
-ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_TAUS = [20.0, 100.0, 500.0, 2000.0]
 
 
@@ -25,18 +22,6 @@ def test_k1_reservoir_has_no_trainable_state() -> None:
     assert not res.W_in.requires_grad and not res.W_rec.requires_grad
     assert not hasattr(res, "update")
     assert {"W_in", "W_rec"} <= set(res.state_dict())         # checkpoint'e girer
-
-
-def test_k2_no_autograd_in_src() -> None:
-    """K2: kaynak kodda backward / optimizer / autograd kullanımı yok."""
-    forbidden = re.compile(r"\.backward\(|torch\.optim|torch\.autograd|requires_grad_\(True\)|requires_grad\s*=\s*True")
-    offenders = [
-        f"{p.relative_to(ROOT)}:{i}"
-        for p in (ROOT / "src").rglob("*.py")
-        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-        if forbidden.search(line)
-    ]
-    assert offenders == []
 
 
 def test_k3_k6_cerebellum_interfaces() -> None:

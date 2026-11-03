@@ -23,16 +23,15 @@ Araştırma sorusu: duygu uzayı ve regülatörler, veri kaydığında (oturumla
 ## Kesin kurallar (kod yazarken asla ihlal etme)
 
 1. **K1:** `W_in`, `W_rec` sabit seed ile üretilir, `requires_grad=False`, hiçbir `update` onlara dokunmaz. Rezervuarda değişen tek şey regülatörden gelen `g` ve `τ`.
-2. **K2:** `loss.backward()`, `torch.autograd`, optimizer yok. Tüm güncellemeler `torch.no_grad()` içinde, açık formüllerle ve yerel.
-3. **K3:** δ (sonuç hatası) yalnızca karar bloğunu, e (tahmin hatası) yalnızca beyinciği eğitir. Duygu uzayı bunları yalnızca okur.
-4. **K4:** Regülatörler yalnızca g ∈ [0.5, 2], τ ∈ [20, 2000] ms (log-ölçek, varsayılan 100), η ∈ [1e-4, 1e-1], β ∈ [0.1, 10] üretir. Sigmoid → doğrusal ölçek.
-5. **K5:** `regulators.enabled: false` her zaman çalışmalı (değerler varsayılanda sabit).
-6. **K6:** Rezervuar durumu dizi içinde sıfırlanmaz; beyincik x̂(t+1) üretirken x(t+1)'i göremez.
-7. **K7:** k-WTA: eşiği geçenlerden (`V > θ(τ)`) **en fazla** `k = ⌈ρ·N⌉`. Ortalama ateşleme oranı her τ için loglanır, `[ρ/2, 2ρ]` dışı hata.
-8. **Kodlayıcı (§3.1):** `SpikeEncoder` = delta (2·D_in) + seviye/termometre (L·D_in) kanalları, `C = (2+L)·D_in`. Seviye aralığı yalnızca eğitim verisinden.
-9. **Rezervuar (§3.2):** nöron başına `τ_i = τ·m_i` ve göreli denge `c_i`; `V_i = α_i·V_i + c_i·I_i` (ortak `(1−α)` yok); yumuşak sıfırlama `V ← V − θ`; `γ_rec` rekürrent kazanç; θ(τ) bir kez kalibre edilen sabit tablo; okuma vektörü her zaman `r = [f, v]`, şekil `[B, 2N]`. `LIFReservoir.from_config(cfg, D_in, seed)` ham girdi boyutunu alır.
-10. **K8:** Kodda sabit hiperparametre yok — her şey YAML config'ten gelir. Config + seed + git hash + metrikler her koşuda kaydedilir. Sonuçlar ≥5 seed, ortalama ± std.
-11. Test seti üzerinde hiperparametre/regülatör ayarı yapılmaz.
+2. **K3:** δ (sonuç hatası) yalnızca karar bloğunu, e (tahmin hatası) yalnızca beyinciği eğitir. Duygu uzayı bunları yalnızca okur.
+3. **K4:** Regülatörler yalnızca g ∈ [0.5, 2], τ ∈ [20, 2000] ms (log-ölçek, varsayılan 100), η ∈ [1e-4, 1e-1], β ∈ [0.1, 10] üretir. Sigmoid → doğrusal ölçek.
+4. **K5:** `regulators.enabled: false` her zaman çalışmalı (değerler varsayılanda sabit).
+5. **K6:** Rezervuar durumu dizi içinde sıfırlanmaz; beyincik x̂(t+1) üretirken x(t+1)'i göremez.
+6. **K7:** k-WTA: eşiği geçenlerden (`V > θ(τ)`) **en fazla** `k = ⌈ρ·N⌉`. Ortalama ateşleme oranı her τ için loglanır, `[ρ/2, 2ρ]` dışı hata.
+7. **Kodlayıcı (§3.1):** `SpikeEncoder` = delta (2·D_in) + seviye/termometre (L·D_in) kanalları, `C = (2+L)·D_in`. Seviye aralığı yalnızca eğitim verisinden.
+8. **Rezervuar (§3.2):** nöron başına `τ_i = τ·m_i` ve göreli denge `c_i`; `V_i = α_i·V_i + c_i·I_i` (ortak `(1−α)` yok); yumuşak sıfırlama `V ← V − θ`; `γ_rec` rekürrent kazanç; θ(τ) bir kez kalibre edilen sabit tablo; okuma vektörü her zaman `r = [f, v]`, şekil `[B, 2N]`. `LIFReservoir.from_config(cfg, D_in, seed)` ham girdi boyutunu alır.
+9. **K8:** Kodda sabit hiperparametre yok — her şey YAML config'ten gelir. Config + seed + git hash + metrikler her koşuda kaydedilir. Sonuçlar ≥5 seed, ortalama ± std.
+10. Test seti üzerinde hiperparametre/regülatör ayarı yapılmaz.
 
 ## Kodlama kuralları
 

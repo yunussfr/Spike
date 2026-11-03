@@ -492,6 +492,31 @@ Her kayıt:
   - Loco'da η 1,6e-2 ile bile R² val'in ilk yarısından ikinciye düşüyor (0,325 → 0,208); kayma tam izlenemiyor.
 - **Uyarılar:** 3 ayar seed'i, yalnızca val, oturum içi. η taraması da val'de bir ayar; sonuçlar rapor seed'leri ve test bölmesinde bir kez doğrulanmalı.
 
+### KR-033 — K2 kaldırıldı; tavan ve kayıp ölçümü: kayıp okumada değil, doğrusal temsilde
+- **Bağlam:** Kullanıcı K2'yi (global geri yayılım yok) CLAUDE.md'den çıkardı; ARCHITECTURE.md'de hâlâ yazılıydı. Ayrıca "iyileştirmeler körlemesine olmasın" diye önce kaybın yerinin ölçülmesini istedi.
+- **Karar (K2):** ARCHITECTURE.md'de K2 "kaldırıldı" olarak işaretlendi, numara boş bırakıldı (K3–K8 adları değişmez). Okuma blokları yerel kurallarla öğrenmeye devam eder (tasarım seçimi, değişmez değil). Tavan modelleri otomatik türev kullanabilir. `test_k2_no_autograd_in_src` kaldırıldı; §3.3, §10, §11, Explain.md ve yorumlardaki K2 atıfları temizlendi.
+- **Ölçüm:** `experiments/ceiling.py`, `configs/ceiling.yaml`. Koşu `runs/20261103-151255_ceiling_seeds0-1-2-3-4`. Aynı 20 ms ızgara, 80/10/10 bölme, test R²; tüm seçimler val'de.
+  - (a) Wiener: son H kutunun ham sayımları üzerinde ridge, H ∈ {1, 5, 10, 20}.
+  - (b) GRU: 1 katman, gizli 128/256 (val'de), TBPTT (16 akış × 50 adım), AdamW, val'de erken durdurma; değerlendirmede tüm dosya tek nedensel akış. 5 seed.
+  - (c) ridge-r ve NLMS (A, 12 tur): Faz 3 tam koşusundan (`runs/20261030-101907_nhp_motor_full_seeds0-1-2-3-4`).
+
+  | Oturum | (a) Wiener H=10 | Wiener H=20 | (b) GRU | (c) ridge-r | NLMS |
+  |---|---|---|---|---|---|
+  | indy_20170131_02 | 0,508 | 0,585 | 0,779 ± 0,014 | 0,500 ± 0,014 | 0,446 ± 0,018 |
+  | indy_20160630_01 | 0,351 | 0,352 | 0,623 ± 0,007 | 0,368 ± 0,007 | 0,352 ± 0,009 |
+  | indy_20160622_01 | 0,510 | 0,601 | 0,806 ± 0,008 | 0,553 ± 0,013 | 0,529 ± 0,010 |
+  | loco_20170301_05 | 0,393 | 0,457 | 0,689 ± 0,021 | 0,355 ± 0,011 | 0,399 ± 0,014 |
+  | loco_20170215_02 | 0,391 | 0,403 | 0,662 ± 0,020 | 0,378 ± 0,023 | 0,344 ± 0,009 |
+  | loco_20170210_03 | 0,336 | 0,386 | 0,705 ± 0,021 | 0,319 ± 0,007 | 0,352 ± 0,007 |
+  | **Indy ort.** | 0,457 | 0,513 | 0,736 | 0,474 | 0,442 |
+  | **Loco ort.** | 0,373 | 0,415 | 0,685 | 0,351 | 0,365 |
+- **Okuma:**
+  1. **(c) − NLMS küçük:** Indy +0,032, Loco −0,014 (iki Loco oturumunda NLMS ridge'den iyi). Okuma kuralı darboğaz değil.
+  2. **(a) ≈ (c), ama (a) H = 20 > (c):** Rezervuar ~200 ms doğrusal geçmiş kadar bilgi taşıyor; 400 ms geçmişin doğrusal okumasına göre Indy −0,04, Loco −0,06 kaybediyor. Rezervuar bellek ufku kısa ya da bilgiyi doğrusal okunur biçimde tutmuyor.
+  3. **(b) ≫ hepsi:** GRU her oturumda +0,25–0,35 önde. GRU NeuroBench taban çizgilerini de geçiyor (0,736 / 0,685 vs SNN 0,593 / 0,568) ve AEGRU makalesindeki vanilla GRU ile tutarlı (6 oturum ort. 0,67, 4 ms adım, 50/25/25). Asıl kayıp doğrusal okunan temsilin kendisinde: hiçbir doğrusal okuma (ham geçmiş dahil) ~0,5'i geçmiyor.
+- **Sonuç:** Okuma kuralını (η, kapılar) iyileştirmek en fazla ~0,03 kazandırabilir. Büyük fark (~0,3) doğrusal olmayan zamansal bütünleştirmede; mimari kararı gerekiyor (ör. rezervuarın bellek ufku/doğrusal olmayanlığı, okumada doğrusal olmayan katman ya da eğitilebilir rekürrent blok).
+- **Uyarılar:** Wiener'de Loco λ ızgara kenarında (1e5) ve H = 20 en uzun denenen; daha uzun H / büyük λ Wiener'i biraz daha yükseltebilir. GRU gizli boyutu da çoğunlukla ızgaranın üst ucunda (256): GRU sayısı tavanın alt sınırı. Protokol NeuroBench ile birebir değil (20 ms adım, 80/10/10, KR-018).
+
 ---
 
 ## Altyapı

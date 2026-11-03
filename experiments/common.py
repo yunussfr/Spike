@@ -1,6 +1,6 @@
 """Deney script'lerinin ortak parçaları: rezervuar kurulumu, r(t) toplama, ridge referansı, R².
 
-Ridge yalnızca karşılaştırma içindir (üst sınır); sistemin öğrenme kuralı değildir (K2).
+Ridge yalnızca karşılaştırma içindir (üst sınır); sistemin öğrenme kuralı değildir.
 """
 
 import math
