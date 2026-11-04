@@ -2,8 +2,47 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Faz 6, adım 6a (2026-11-03). Sürpriz / duygu kapılı η eşlenmiş η'ya göre katkı vermedi (KR-032). En güçlü kaldıraç okumanın η'sı: sabit η = 1,6e-2'de bile R² artmaya devam ediyor (Loco 0,260). τ kapısı ve C de katkısız (KR-031). Faz 5 kullanıcı kararıyla kapandı (KR-030).
-**Açık kararlar:** θ(τ) tablosu hâlâ "geçici"; `γ_rec` = 1.0 (1/3/10 arası fark gürültü düzeyinde).
+**Şu an:** Spike v2, aktif faz V0 (`docs/PhasesV2.md`); kalan tek çıkış kriteri 4 ms tavanının Loco oturumları (koşu sürüyor). v1 Faz 6 kayma deneyi askıda.
+**Açık kararlar:** v2 — plif sıfırlama gecikmesi, beyincik girdisi, bias güncellemesi (ARCHITECTURE.md §12.10); epoch bütçesi V2'de (KR-036). v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+
+---
+
+## 2026-11-04 — Faz V0: veri katmanı, protokol kararı, 4 ms tavanı (KR-035, KR-036)
+
+**Yaptıklarım**
+- [x] `src/v2/data.py`: Δt tutarlılık kontrolü, train-içi pencereler, günler arası sıra; testler `tests/v2/test_v0_data.py`.
+- [x] `configs/v2_base.yaml`, `configs/v2_ceiling.yaml`, `experiments/v2_ceiling.py`, `experiments/v2_bench.py`.
+- [x] KR-035: bölme 80/10/10 (v1 ile aynı), kod `src/v2/`, Day-0 = primat başına ilk oturum. ARCHITECTURE.md §12.10 nokta 1–2 kapandı.
+- [x] KR-036: epoch süresi ölçümü V2'ye ertelendi (omurga yokken prototip ölçüyordu).
+- [ ] 4 ms tavanı (`runs/20261103-214626_v2_ceiling_seeds0-1-2-3-4`): Indy bitti, Loco sürüyor.
+
+  | Oturum | Wiener 400 ms (test) | GRU test R² (ort., 5 seed) |
+  |---|---|---|
+  | indy_20170131_02 | 0,580 | 0,752 |
+  | indy_20160630_01 | 0,359 | 0,597 |
+  | indy_20160622_01 | 0,599 | 0,775 |
+  | loco_20170301_05 | 0,518 | 0,629 (4/5 seed) |
+
+**Etkisi**
+- `indy_20160630_01`'de GRU tavanı (0,597) v2 hedefinin (≥ 0,65) altında; bu oturumda hedef gerçekçi değil, değerlendirme tavana göre yapılmalı.
+- Tavan koşusu v2 dosyaları commit edilmeden başladı (`meta.json`: 33d5036, dirty). Kod sonradan değişmeden commit edildi.
+- İki seed ~11 saat sürdü (uyku); KR-022 geçerli.
+
+---
+
+## 2026-11-03 — Spike v2 dokümanları (KR-034)
+
+**Yaptıklarım**
+- [x] `docs/PhasesV2.md`: v2 fazları V0–V6, her biri testler ve çıkış kriteriyle.
+- [x] ARCHITECTURE.md: "Sürümler" notu, §12 Spike v2 (KV1–KV8, denklemler, protokol, v2-A…E, açık noktalar), §11 kaydı.
+- [x] CLAUDE.md v2'ye göre güncellendi; Desicion.md'ye KR-034.
+
+**Etkisi**
+- v1 kuralları v1 kodunda geçerli; v2 kodu yalnızca §12'ye bağlı. Kod değişikliği yok.
+
+**Açık**
+- V0: 4 ms önbellek, bölme protokolü kararı, 4 ms GRU tavanı, epoch süresi ölçümü.
+- Değişiklikler commit edilmedi.
 
 ---
 

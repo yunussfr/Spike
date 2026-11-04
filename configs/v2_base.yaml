@@ -1,0 +1,46 @@
+# Spike v2 varsayılanları (ARCHITECTURE.md §12, docs/PhasesV2.md). v1 config'lerinden bağımsızdır.
+# Not: bilimsel gösterimde nokta ve üs işareti kullan: `1.0e-4` (load_config string'i yakalar).
+
+experiment:
+  name: v2_base
+  seed: 0
+  seeds: [0, 1, 2, 3, 4]     # rapor seed'leri (KV8: en az 5)
+  tune_seeds: [100, 101, 102] # ayar seed'leri; yalnızca val
+  device: auto               # auto | cpu | cuda
+  log_dir: runs
+
+time:
+  dt_ms: 4.0                 # bir veri adımı = bir omurga adımı (KV6); hızlı mod 8.0 → data.bin_width/stride da 0.008
+
+data:
+  dir: data/primate
+  cache_dir: data/primate/cache
+  files:                     # NeuroBench sırası; 6 oturum
+    - indy_20170131_02
+    - indy_20160630_01
+    - indy_20160622_01
+    - loco_20170301_05
+    - loco_20170215_02
+    - loco_20170210_03
+  bin_width: 0.004           # s; = time.dt_ms (NeuroBench ham çözünürlüğü)
+  stride: 0.004              # s; örtüşmesiz kutular
+  train_ratio: 0.8           # NeuroBench bölmesi: segmentlerin %80 train, kalan yarı yarıya val/test (KR-035)
+  biological_delay: 0        # adım; spike → hareket gecikmesi
+
+primates:                    # günler arası protokol: oturumlar tarih sırasıyla, ilki Day-0 (KR-035)
+  indy: [indy_20160622_01, indy_20160630_01, indy_20170131_02]
+  loco: [loco_20170210_03, loco_20170215_02, loco_20170301_05]
+
+windows:                     # çevrimdışı eğitim pencereleri (§12.8); yalnızca train diliminden
+  length_ms: 2000.0          # 4 ms'de 500 adım
+  stride_ms: 1000.0          # yarı örtüşmeli; 4 ms'de 250 adım
+
+bench:                       # Faz V0 hesap bütçesi ölçümü (experiments/v2_bench.py); prototip adım, src/v2 omurgası değil
+  N: 1000
+  batch: 32
+  modes: [plif, gru_loop]    # plif: LIF + surrogate; gru_loop: adım adım GRU hücresi (spiking_gru / tau_gru maliyeti)
+  dt_ms: [4.0, 8.0]          # pencere süresi sabit, adım sayısı Δt'ye göre
+  warmup: 2                  # ölçülmeyen ilk batch'ler
+  iters: 5                   # ölçülen batch sayısı
+  epochs_pretrain: 100       # §12.8
+  epochs_finetune: 150

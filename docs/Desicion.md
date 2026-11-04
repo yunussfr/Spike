@@ -519,6 +519,51 @@ Her kayıt:
 
 ---
 
+## Spike v2 (2026-11-03)
+
+### KR-034 — Spike v2 hattına geçiş: eğitilebilir omurga + nöromodüle çevrimiçi yerel uyum
+- **Bağlam:** KR-033: kayıp okuma kuralında değil, doğrusal okunan temsilde (GRU tavanı v1'den +0,25–0,35 R²). Kullanıcı `docs/spike_v2_mimari_spesifikasyon.md`'yi yükledi ve bu doğrultuda yeni özellik eklemek istedi.
+- **Karar:**
+  - ARCHITECTURE.md'ye §12 (Spike v2) ve v2 kuralları **KV1–KV8** eklendi. v1 kuralları (§2–§10) v1 koduna uygulanmaya devam ediyor; v2 kodu yalnızca §12'ye bağlı.
+  - Temel değişiklikler (v1 → v2):
+    - Omurga çevrimdışı eğitilir, çevrimiçi donuktur (K1 → KV1).
+    - τ çevrimiçi modüle edilmez; regülatörler yalnızca g_fast/g_slow ve η üretir (K4 → KV4).
+    - k-WTA yerine homeostatik kayıp + eşik adaptasyonu (K7 → KV7).
+    - Kodlayıcı Anscombe + kanal z-skoru + yumuşak kırpma.
+    - Δt = 4 ms, iç adım yok.
+  - Fazlar: `docs/PhasesV2.md` (V0–V6). v1 Faz 6 kayma deneyi askıya alındı.
+  - Değerlendirme koşulları `v2-A` … `v2-E` (v1 A/B/C ile karışmasın diye).
+- **Alternatifler:**
+  - v1'i yerinde değiştirmek: v1 sonuçlarının tekrarlanabilirliği ve 139 test bozulurdu. Seçilmedi; v2 ayrı modüllerde (öneri `src/v2/`, V0'da onaylanacak).
+  - v1 rezervuarını büyütmek / doğrusal olmayan okuma eklemek: KR-033'te seçenek olarak duruyordu; kullanıcı spesifikasyonu eğitilebilir omurgayı seçti.
+- **Spesifikasyon notları:**
+  - Spesifikasyonun v1 teşhisinin bir kısmı depodaki v1 ile uyuşmuyor: kodlayıcı Min-Max + Poisson değil, delta + termometre; τ tekil değil, τ·m_i yayılımlı; efference copy ve elastik çapalı NLMS v1'de zaten var. Ateşleme oranı teşhisi (%1–2) doğru. Bunlar v2 kararlarını değiştirmez.
+  - Açık noktalar ARCHITECTURE.md §12.10'da: bölme protokolü, kod yerleşimi, plif sıfırlama gecikmesi, beyincik girdisi döngüsü, bias güncellemesi, hesap bütçesi, primat başına ön-eğitim.
+- **Risk:** v1'de sürpriz/duygu kapılı η eşlenmiş sabit η'yı geçmedi (KR-031, KR-032). v2-D > v2-B iddiası bu yüzden önceden kanıtlı sayılmaz; v2-B (eşlenmiş η̄) ve v2-C (karıştırılmış η) kontrolleri zorunlu.
+- **Durum:** Yalnızca dokümanlar güncellendi; kod yok. Sıradaki: Faz V0.
+
+### KR-035 — v2 bölme protokolü, kod yerleşimi ve günler arası protokol (Faz V0)
+- **Bağlam:** ARCHITECTURE.md §12.10 açık noktaları 1, 2 ve 7. Bölme seçimi tüm v2 fazlarında sabit kalmalı; sonradan değişirse tavan ve sonuçlar karşılaştırılamaz, test seti kayabilir.
+- **Karar:**
+  - **Bölme:** NeuroBench segment bölmesi, v1 ile aynı: hedef segmentlerinin ilk %80'i train, kalan yarı yarıya val / test (80/10/10). `data.train_ratio: 0.8`. Tüm v2 fazlarında sabit.
+  - **Kod yerleşimi:** v2 modülleri `src/v2/`, testleri `tests/v2/`, config'leri `configs/v2_*.yaml`, betikleri `experiments/v2_*.py`. v1 dosyaları değişmez; v2 yalnızca altyapıyı (`src/data/primate.py`, `src/utils/`, `experiments/common.py`, `experiments/ceiling.py`) import eder.
+  - **Δt ızgarası:** `time.dt_ms = data.bin_width = data.stride` (4 ms); uyuşmazlık hata verir (`check_time`).
+  - **Günler arası protokol:** primat başına oturumlar tarih sırasıyla, ilki Day-0 (Indy: 20160622 → 20160630 → 20170131; Loco: 20170210 → 20170215 → 20170301). Kanal sayıları farklı olduğundan (Indy 96, Loco 192) ön-eğitim primat başınadır; kanal eşleme gerekmez.
+  - **Pencereler:** 2000 ms uzunluk, 1000 ms kayma, yalnızca train diliminden.
+- **Alternatifler:**
+  - Spesifikasyonun 65/10/25'i: test daha büyük, ama v1 sonuçları ve KR-033 tavanı ile doğrudan karşılaştırma kaybolur. Seçilmedi.
+  - NeuroBench 75/25: val dilimi yok; ayar test üstünde yapılmak zorunda kalır (kural 9). Seçilmedi.
+- **Not:** Bölme v1 ile aynı olduğu için v1 sonuçları (KR-033, Faz 6a) v2 ile aynı val/test diliminde karşılaştırılabilir. Test %10 olduğundan NeuroBench literatüründeki (%25 test) sayılarla birebir kıyas yapılmaz.
+- **Durum:** Kodda uygulandı (`src/v2/data.py`, `configs/v2_base.yaml`), testler `tests/v2/test_v0_data.py`.
+
+### KR-036 — Hesap bütçesi ölçümü Faz V2'ye ertelendi
+- **Bağlam:** V0 çıkış kriterlerinden biri epoch süresi ölçümüydü (`experiments/v2_bench.py`, §12.10 nokta 6). Omurga henüz yazılmadığından betik gerçek `TemporalBackbone`'u değil, prototip `plif` / `gru_loop` adımlarını ölçüyor.
+- **Karar (kullanıcı, 2026-11-04):** Bütçe ölçümü Faz V2'ye taşındı; gerçek omurga yazıldığında aynı betikle (prototip yerine `src/v2` omurgası) ölçülür ve epoch sayıları gerekiyorsa o zaman KR ile güncellenir. V0 çıkış kriterinden çıkarıldı.
+- **Etkisi:** V3 ön-eğitimi başlamadan önce ölçüm yine yapılmış olur; prototip sayısına dayanarak erken karar verilmez.
+- **Durum:** `experiments/v2_bench.py` ve `bench` config bloğu depoda kalır; V2'de güncellenecek.
+
+---
+
 ## Altyapı
 
 ### KR-022 — Batch'li okuma blokları; tam koşu iki aşamalı, oturum başına CPU süreci

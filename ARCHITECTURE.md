@@ -2,6 +2,11 @@
 
 Bu dosya kod tabanının **değişmez kurallarını** tanımlar. Her yeni kod, her refaktör ve her deney bu kurallara uymak zorundadır. Bir kural değişecekse önce bu dosya güncellenir, sonra kod.
 
+> **Sürümler (2026-11-03, KR-034).** Depoda iki mimari hattı vardır:
+> - **Spike v1** (§1–§10): sabit LIF rezervuarı + yerel okumalar. Kuralları K1–K8. v1 kodu (`LIFReservoir`, A/B/C, Faz 0–6) bu kurallara uymaya devam eder.
+> - **Spike v2** (§12): çevrimdışı eğitilen zamansal omurga + çevrimiçi nöromodüle yerel uyum. Kuralları **KV1–KV8**. Kaynak: `docs/spike_v2_mimari_spesifikasyon.md`, fazlar: `docs/PhasesV2.md`.
+> - v2 kodu yalnızca §12'ye bağlıdır; v1 kuralları (ör. K1 sabit rezervuar, K7 k-WTA) v2 modüllerini bağlamaz. Aktif geliştirme hattı v2'dir.
+
 ---
 
 ## 1. Amaç
@@ -417,6 +422,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-03 | Spike v2 hattı eklendi (§12): çevrimdışı eğitilen hızlı/yavaş omurga, Anscombe kodlayıcı, yumuşatılmış hedefli beyincik, sürpriz modülasyonlu η + alt-popülasyon kapılama, 5 başlıklı çapalı okuma; v2 kuralları KV1–KV8. v1 kuralları v1 koduna uygulanmaya devam eder | Kullanıcı spesifikasyonu (`docs/spike_v2_mimari_spesifikasyon.md`, KR-034). KR-033: kayıp doğrusal okunan temsilde (GRU tavanı +0,3 R²); sabit rezervuar bu farkı kapatamıyor |
 | 2026-11-03 | K2 (global geri yayılım yok) kaldırıldı; numara boş bırakıldı | Kullanıcı kararı (KR-033). Tavan ölçümü için BPTT ile eğitilen GRU referansı gerekiyor; okuma blokları yerel kalır |
 | 2026-11-02 | Faz 6: değerlendirmede hızlı-yavaş okuma W_base + ΔW (elastik çapa, NLMS, norm sınırı), η_t nöromodülatör kapısı (§3.6), prequential protokol (§8), opsiyonel çapa alt-popülasyonu (§3.2) | Kullanıcı spesifikasyonu (KR-031). Faz 5'te donuk okuma ile C ≈ B+Z; hipotez: τ'nun yarattığı temsil kayması okuma uyumu gerektiriyor |
 | 2026-11-02 | Değerlendirmede nedensel homeostatik normalizasyon (`freeze_norm_eval: false`, §8); asimetrik τ eşlemesi (`tau_ceiling`, §3.5); okuma vektöründe varyans koruyucu κ(τ) (§3.2) | KR-029: regülatörlerin τ'yu kaydırması donuk okuma için temsil kaymasına dönüşüyordu (KR-030) |
@@ -436,3 +442,197 @@ Her deney üç konfigürasyonla koşulur:
 | 2026-10-29 | Seviye aralığı kanal başına olabilir (§3.1, `train_per_channel`) | Sinir kanallarının ateşleme oranları çok farklı; tek aralıkta sakin kanallar hiç seviye biti yakmıyor (KR-013) |
 | 2026-10-28 | Beyincik varsayılan kuralı normalize edilmiş çevrimiçi LMS oldu (§3.3) | Faz 2: ham delta kuralı `‖φ‖² ~ 1e6` ile ıraksadı (5 seed'de NaN); normalize kural MSE'yi "önceki değeri tekrarla"nın %17.9'una indirdi, ridge'e göre fark %6.8 |
 | 2026-10-24 | Kodlayıcı `DeltaEncoder` → `SpikeEncoder`: delta kanallarına seviye (termometre) kanalları eklendi | Delta kodlama x'in seviyesini iletmiyordu; ideal bir hafızayla bile pencere ortalaması geri çıkarılamıyordu (Bölüm 3.1) |
+
+---
+
+## 12. Spike v2 — Ön-eğitimli omurga + nöromodüle çevrimiçi yerel uyum
+
+Kaynak: `docs/spike_v2_mimari_spesifikasyon.md` (kullanıcı spesifikasyonu, 2026-11-03). Fazlar: `docs/PhasesV2.md`. Karar: KR-034.
+Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifikasyon dosyasındadır. Spesifikasyondaki sayılar başlangıç değerleridir ve ölçümle (KR kaydıyla) değişebilir. §12.10'daki açık noktalar ilgili fazda kapatılır.
+
+### 12.1 Amaç ve araştırma sorusu
+- Çevrimdışı (surrogate gradyan / BPTT) eğitilen, hızlı/yavaş alt-popülasyonlu bir zamansal omurga; üstünde yalnızca yerel kurallarla çevrimiçi uyum sağlayan okuma blokları.
+- Hedef: NeuroBench Primate Reaching oturum içi test R² ≥ 0,65–0,70. Referans: KR-033 GRU tavanı (20 ms'de Indy 0,736 / Loco 0,685).
+- **Araştırma sorusu (v2):** Beklenmedik sürprizle modüle edilen öğrenme hızı η(t) ve hızlı/yavaş alt-popülasyon kapılaması, günler arası kaymada ve elektrot kaybında, aynı ortalama η'lı sabit kuraldan (v2-B) ve zamanlaması karıştırılmış η'dan (v2-C) daha iyi uyum sağlıyor mu?
+
+### 12.2 v2 değişmez kuralları (KV1–KV8)
+
+**KV1 — Omurga çevrimdışı eğitilir, çevrimiçi donuktur.**
+- Omurga ağırlıkları (`plif`: W_in, W_rec; GRU modları: kapı matrisleri) ve zaman sabitleri τ_mem,i, τ_syn,i yalnızca Aşama 1–2'de (§12.8) gradyanla öğrenilir. Başlatma sabit seed'lidir; ağırlıklar checkpoint'e kaydedilir.
+- Aşama 3'te (çevrimiçi akış) omurganın tüm parametreleri `requires_grad=False`'tur ve hiçbir güncelleme onlara dokunmaz. τ_i çevrimiçi **değişmez**: v1'deki τ regülatörü v2'de yoktur.
+- Çevrimiçi değişebilen tek omurga durumu homeostatik eşiktir: `ϑ_i ← clip(ϑ_i + η_homeo·(r̄_i − ρ), ϑ_min, ϑ_max)`. Etiketsiz, nöron başına yerel ve nedenseldir (v1 KR-030 nedensel homeostatik normalizasyonunun karşılığı).
+
+**KV2 — Çevrimiçi öğrenme yereldir.** Aşama 3'te gradyan, BPTT ya da optimizer yoktur. Yalnızca açık formüllü kurallar çalışır: beyincik NLMS'i (§12.5), çapalı okuma NLMS'i (§12.7), homeostatik eşik (KV1). Çevrimdışı aşamalarda gradyan serbesttir (K2, KR-033'te kaldırıldı).
+
+**KV3 — Öğrenme sinyalleri karışmaz.**
+| Sinyal | Tanım | Kimi eğitir |
+|---|---|---|
+| **e_v** (sonuç hatası, v1'deki δ) | v(t) − v̂(t) | Çevrimiçi: yalnızca okuma başlıkları. Çevrimdışı: omurga + başlıklar (hız kaybı) |
+| **e_cer** (tahmin hatası, v1'deki e) | x̄(t+1) − x̂_smooth(t+1) | Yalnızca W_cer |
+- Beyincik kaybı omurgaya gradyan vermez. Duygu uzayı e_cer'i yalnızca **okur**, değiştirmez.
+
+**KV4 — Regülatörler yalnızca okuma kapılama kazançlarını ve η'yı üretir.**
+| Regülatör | Etkilediği yer | Aralık | Varsayılan |
+|---|---|---|---|
+| g_fast, g_slow | Okuma izlerinin hızlı / yavaş yarısı (§12.7) | [1 − α_gate, 1 + α_gate] ⊂ [0,5; 2] | 1 |
+| η(t) | Okuma başlıklarının çevrimiçi NLMS adımı | [η_0, η_0·(1 + α_η)] ⊂ [1e-4; 1e-1] | η_0 |
+- τ, ϑ, omurga ağırlıkları, beyincik adımı ve başka hiçbir hiperparametre regülatörden etkilenmez. β (karar sıcaklığı) regresyonda kullanılmaz.
+
+**KV5 — Regülatörsüz mod her zaman çalışır.** `regulators.enabled: false` → g_fast = g_slow = 1 ve η sabit (v2-A'da 0, v2-B'de η̄). Ablation için zorunludur ve testlidir.
+
+**KV6 — Zaman ve sızıntı.**
+- Bir veri adımı = bir omurga adımı; Δt config'ten gelir (varsayılan 4 ms). v1'deki T iç adım yoktur.
+- Akış değerlendirmesinde durum sıfırlanmaz. Çevrimdışı eğitimde her pencere yeni bir dizidir.
+- Beyincik x̂_smooth(t+1)'i üretirken x(t+1)'i ve x̄(t+1)'i göremez.
+- Prequential sıra: v̂(t) üretilir ve skorlanır; güncelleme ancak sonra e_v(t) ile yapılır.
+- Kodlayıcı istatistikleri (μ_ch, σ_ch) ve tüm ölçekler yalnızca train diliminden hesaplanır.
+
+**KV7 — Ateşleme rejimi (k-WTA yerine homeostaz).**
+- v2 omurgasında k-WTA yoktur. Hedef ortalama oran ρ = 0,05 (config `target_rate`).
+- Çevrimdışı: homeostatik kayıp oranı [f_min, f_max] = [0,02; 0,08] bandına iter. Çevrimiçi: KV1'deki eşik adaptasyonu.
+- Ortalama ateşleme oranı her koşuda **alt-popülasyon başına** (hızlı / yavaş) loglanır. Değerlendirmede [f_min, f_max] dışı oran hata olarak raporlanır.
+- `tau_gru` modu (sürekli aktivasyon, üst sınır kontrolü) bu kuraldan muaftır.
+
+**KV8 — Tekrarlanabilirlik.** K8 aynen geçerlidir: hiperparametreler YAML'dan, ≥5 seed, ortalama ± std, config + seed + git hash + metrik. Ek olarak:
+- Ön-eğitim, Day-0 ve W_0 checkpoint'lerinin yolu ve hash'i koşu kaydına yazılır.
+- Spesifikasyon kodundaki sabitler config'e taşınır: Anscombe sabiti 3/8, kırpma ölçeği 3, τ_syn aralığı 4–100 ms, surrogate ölçeği 10, EMA katsayıları, ϑ sınırları 0,3–2,5.
+- Test bölmesinde hiperparametre/regülatör ayarı yapılmaz.
+
+### 12.3 Kodlayıcı v2 (`SpikeEncoderV2`)
+```
+x_ans(t)  = √(max(0, x_raw(t)) + 3/8)                 # Anscombe: Poisson varyansını sabitler    [B, C]
+z(t)      = (x_ans(t) − μ_ch) / (σ_ch + ε)             # μ_ch, σ_ch yalnızca train'den             [B, C]
+x_norm(t) = c · tanh(z(t) / c),  c = 3                 # yumuşak kırpma                             [B, C]
+x̄(t)     = α_sm · x̄(t−1) + (1 − α_sm) · x_norm(t)    # α_sm = exp(−Δt / τ_smooth), τ_smooth = 48 ms; beyincik hedefi
+```
+- Çıktı sürekli değerlidir; v1'in delta + termometre kanalları (§3.1) v2'de kullanılmaz. C ham kanal sayısıdır (Indy 96, Loco 192).
+- Sebep: M1/S1 kanallarının taban oranı ve patlama varyansı farkı, mimariyi bölmeden veri katmanında dengelenir.
+
+### 12.4 Zamansal omurga (`TemporalBackbone`)
+- N = 1000 nöron. **Hızlı** yarı (i < N/2): τ_mem ∈ [4, 40] ms. **Yavaş** yarı (i ≥ N/2): τ_mem ∈ [40, 400] ms. `τ_mem = τ_min + (τ_max − τ_min)·σ(λ_i)`, λ_i öğrenilir. τ_syn ∈ [4, 100] ms aynı biçimde.
+- Modlar (config `backbone.mode`):
+  1. `plif`:
+     ```
+     I(t) = α_syn ⊙ I(t−1) + W_in·x(t) + W_rec·s(t−1)
+     V(t) = β_mem ⊙ V(t−1) + (1 − β_mem) ⊙ I(t) − ϑ ⊙ s(t−1)      # yumuşak sıfırlama
+     s(t) = H(V(t) − ϑ)                                            # geri yönde hızlı-sigmoid surrogate
+     ```
+     β_mem = exp(−Δt/τ_mem), α_syn = exp(−Δt/τ_syn). Başlatma: W_in ~ N(0, 1/C), W_rec ortogonal (kazanç 0,9); dalgalanma güdümlü başlatma (Rossbroich vd. 2022).
+  2. `spiking_gru`: GRU kapıları iç durumu günceller; dışarıya ve rekürrent bağlantıya yalnızca ikili s(t) gider. Güncelleme kapısı bias'ı τ_mem dağılımından chrono başlatmayla gelir.
+  3. `tau_gru`: eşiksiz, sürekli aktivasyonlu kontrol modu (üst sınır).
+- Eğitimde girdi ve s(t−1) üzerinde dropout (p = 0,3).
+- Homeostatik kayıp: `L_homeo = mean_i [relu(f_min − r̄_i)² + relu(r̄_i − f_max)²]`; r̄_i pencere ve batch üzerinde ortalama orandır.
+- Omurga çıktısı v1'deki `r = [f, v]` değil, s(t) ∈ {0,1}^N'dir (`tau_gru`'da sürekli). Yoğun okuma izleri §12.7'deki sızıntılı entegratörlerle elde edilir.
+
+### 12.5 Beyincik v2 (`CerebellumV2`)
+```
+φ(t)            = [r̄(t), v̂(t−1)]                  # r̄: okuma izlerinin ortalaması [B, N]; v̂(t−1): efference copy [B, 2]
+x̂_smooth(t+1)  = W_cer · φ(t)                      # [B, C]
+e_cer(t+1)      = x̄(t+1) − x̂_smooth(t+1)
+ΔW_cer          = η_cer · e_cer(t+1) · φ(t)ᵀ / (‖φ(t)‖² + ε)      # yerel NLMS; η_cer sabit (KV4)
+```
+- Sebep: ham x(t+1) büyük ölçüde Poisson gürültüsüdür; yumuşatılmış hedef, sürpriz sinyalini gürültüden ayırır. Efference copy, v1'deki a(t) = ŷ(t)'nin karşılığıdır.
+
+### 12.6 Duygu uzayı v2 ve regülatörler (`AffectSpaceV2`)
+Yu & Dayan (2005) beklenmedik belirsizlik (noradrenalin) esinli:
+```
+ε²(t)      = mean ‖e_cer(t)‖²
+E_fast    ← (1 − a_f)·E_fast + a_f·ε²(t)                 # a_f = 0,05
+E_slow    ← (1 − a_s)·E_slow + a_s·ε²(t)                 # a_s = 0,001
+a(t)       = tanh((E_fast − E_slow) / (E_slow + ε))      # arousal: beklenmedik sürpriz ∈ (−1, 1)
+valence    = −a(t)
+dominance ← 0,95·dominance + 0,05·tanh(10·(E_fast(t−1) − E_fast(t)) / (E_slow + ε))
+g_fast     = 1 + α_gate·a(t),   g_slow = 1 − α_gate·a(t)          # α_gate = 0,25
+η(t)       = η_0·(1 + α_η·max(0, a(t)))                            # η_0 = 5e-4, α_η = 2
+```
+- Duygu uzayı öğrenmez: sabit kuraldır, yalnızca durumunu ilerletir. Durum yeni akışta sıfırlanır.
+- v1'in z / üç baş / E-M-R / perturbasyonla öğrenilen W_r yapısı (§3.4–§3.5) v2'de yoktur. Gerekirse sonraki bir v2 fazında ayrı kararla geri eklenir.
+- valence ve dominance yalnızca loglanır; regülatörlere girmez.
+
+### 12.7 Karar bloğu v2 (`MultiHeadDecisionBlock`)
+```
+r^(k)(t)   = κ_k·r^(k)(t−1) + (1 − κ_k)·s(t),   κ_k = exp(−Δt/τ_read,k),  τ_read ∈ {16, 32, 64, 100, 160} ms     # [K, B, N]
+r̃^(k)(t)  = r^(k)(t) ⊙ [g_fast·1_{N/2}, g_slow·1_{N/2}]
+v̂(t)      = (1/K) Σ_k (W^(k)·r̃^(k)(t) + b^(k))                                                                     # [B, 2]
+```
+Çevrimiçi çapalı NLMS (W_0^(k): Day-0 ince ayarı sonunda dondurulan çapa):
+```
+W^(k) ← (1 − α_anchor)·W^(k) + α_anchor·W_0^(k) + η(t)·e_v(t)·r̃^(k)(t)ᵀ / (‖r̃^(k)(t)‖² + ε),   α_anchor = 1e-4
+```
+- v1 Faz 6'daki W_base + ΔW elastik çapasıyla (§3.6) aynı ilkedir. Fark: çapa doğrudan W_0'a çeker ve normalizasyon başlık başınadır.
+- Çevrimdışı aşamalarda başlıklar omurgayla birlikte gradyanla eğitilir.
+
+### 12.8 Eğitim protokolü
+1. **Aşama 1 — Çoklu oturum ön-eğitimi** (primat başına): her oturumun train dilimi 2 s pencerelere bölünür (Δt = 4 ms → 500 adım, stride 250) ve birleştirilir. Batch 32, AdamW (lr 1e-3, wd 1e-4), CosineAnnealing, 100 epoch.
+   `L = √(mean_t ‖v(t) − v̂(t)‖² + 1e-6) + λ_homeo·L_homeo`, λ_homeo = 10.
+2. **Aşama 2 — Day-0 ince ayarı:** hedef oturumun (günler arası protokolde Day-0 kaynak oturumunun) train diliminde 150 epoch. Val R²'si en yüksek epoch seçilir, ardından `save_anchor_weights()` → W_0.
+3. **Aşama 3 — Akış:** test dilimi (oturum içi ya da Day-k) pencerelenmeden adım adım akar (`eval`, gradyan kapalı, `online_homeostasis` config'ten). Geçerli kurallar: KV1, KV2, KV6.
+
+### 12.9 Değerlendirme koşulları (v2)
+v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
+
+| Kod | İçerik | Ölçtüğü |
+|---|---|---|
+| **v2-A** | Donuk model, η = 0 | Ön-eğitim + ince ayarın kendisi |
+| **v2-B** | Çapalı NLMS, η = v2-D'nin η̄'sı (eşlenmiş), g = 1 | Temel çevrimiçi uyum (birincil adil kontrol) |
+| **v2-C** | v2-D'nin η(t) dizisi zamanda karıştırılmış | Kazanç zamanlamadan mı, varyanstan mı geliyor |
+| **v2-D** | Tam sistem: sürpriz modülasyonlu η(t) + g_fast/g_slow + çapalı NLMS + homeostaz | Önerilen yöntem |
+| **v2-E** | Akış ortasında rastgele 20 giriş kanalı sıfırlanır; A, B, D üzerinde | Toparlanma süresi |
+
+- Senaryolar: oturum içi test ve Day-0 → Day-k (günler arası).
+- Metrikler: R² (NeuroBench), toparlanma süresi (E), alt-popülasyon ateşleme oranı (KV7), a(t)/g/η izleri.
+- **Ana iddianın kanıtı:** v2-D'nin v2-B ve v2-C'den istatistiksel olarak anlamlı biçimde iyi olması (5 seed, Wilcoxon). v1'de kapılı η eşlenmiş η'yı geçemedi (KR-031, KR-032); bu yüzden B ve C kontrolleri zorunludur.
+
+### 12.10 Spesifikasyon notları ve açık noktalar
+Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt için; v2 kararlarını değiştirmez):
+- v1 kodlayıcısı Min-Max + Poisson değil, delta + termometre kanallarıdır (kanal başına yüzdelik ölçek, §3.1).
+- v1'de iç adım 1 ms, ortam adımı 20 ms (T = 20). τ tekil değil, τ·m_i ile ~10–1000 ms'ye yayılır (§3.2).
+- v1 beyinciği zaten efference copy (a(t) = ŷ(t)) alır. v1 Faz 6 okuması zaten elastik çapalı NLMS'tir.
+- v1'in gerçek veride ateşleme oranı 0,009–0,020'dir (KR-014, KR-031); spesifikasyondaki "%1–2" teşhisi doğru.
+
+İlgili fazda kapatılacak açık noktalar:
+1. **Bölme protokolü** (V0): spesifikasyon 65/10/25, v1 80/10/10, NeuroBench 75/25. → **Kapandı (KR-035): 80/10/10, v1 ile aynı.**
+2. **Kod yerleşimi** (V0): öneri `src/v2/` altında ayrı modüller; v1 sınıfları ve testleri korunur. → **Kapandı (KR-035): `src/v2/`, `tests/v2/`, `configs/v2_*.yaml`.**
+3. **Sıfırlama gecikmesi** (V2): referans `plif` kodunda yumuşak sıfırlama s(t−1) ile uygulanıyor (bir adım gecikmeli). Bilinçli mi, düzeltilecek mi?
+4. **Beyincik girdisi döngüsü** (V5): r̄ kapılanmış izlerin ortalaması; g a(t)'ye, a(t) beyincik hatasına bağlı. Beyinciğe kapılanmamış iz mi verilmeli?
+5. **Bias güncellemesi** (V4): referans çevrimiçi NLMS yalnızca W'yi günceller, b^(k) donuk kalır.
+6. **Hesap bütçesi** (V2'ye ertelendi, KR-036): 100 + 150 epoch × N = 1000 × T = 500 adımlık döngü RTX 4060'ta ölçülmeli; gerekirse epoch sayısı azaltılır ya da Δt = 8 ms kullanılır.
+7. **Ön-eğitim kapsamı** (V0/V3): Indy (96 kanal) ve Loco (192 kanal) ayrı primatlardır; ön-eğitim primat başına yapılır. → Günler arası sıra KR-035'te (tarih sırası, ilk oturum Day-0).
+
+### 12.11 Varsayılan hiperparametreler (v2, başlangıç)
+| Parametre | Değer |
+|---|---|
+| Δt | 4 ms (hızlı mod 8 ms) |
+| N (hızlı + yavaş) | 1000 (500 + 500) |
+| τ_mem hızlı / yavaş | [4, 40] / [40, 400] ms |
+| τ_syn | [4, 100] ms |
+| `backbone.mode` | `plif` |
+| dropout | 0,3 |
+| ρ (`target_rate`), [f_min, f_max] | 0,05, [0,02; 0,08] |
+| λ_homeo | 10 |
+| η_homeo, [ϑ_min, ϑ_max] | 1e-3, [0,3; 2,5] |
+| τ_smooth | 48 ms |
+| τ_read | {16, 32, 64, 100, 160} ms |
+| α_anchor | 1e-4 |
+| a_f, a_s | 0,05, 0,001 |
+| α_gate, α_η, η_0 | 0,25, 2, 5e-4 |
+| Pencere / stride | 500 / 250 adım |
+| Ön-eğitim / ince ayar | 100 / 150 epoch, batch 32, AdamW 1e-3, wd 1e-4 |
+
+### 12.12 Modül arayüzleri (v2)
+| Modül | `forward` girdisi | `forward` çıktısı | Çevrimiçi `update` |
+|---|---|---|---|
+| `SpikeEncoderV2` | `x_raw: [B, C]` | `x_norm: [B, C]`, `x̄: [B, C]` | — (`fit` yalnızca train) |
+| `TemporalBackbone` | `x_norm: [B, C]` | `s: [B, N]` | — (yalnızca ϑ homeostazı, KV1) |
+| `MultiHeadDecisionBlock` | `s: [B, N]`, `g_fast`, `g_slow` | `v̂: [B, 2]`, `r̄: [B, N]` | `e_v`, `η(t)` |
+| `CerebellumV2` | `r̄: [B, N]`, `v̂(t−1): [B, 2]` | `x̂_smooth: [B, C]` | `e_cer` |
+| `AffectSpaceV2` | `e_cer: [B, C]` | `a`, valence, dominance, `g_fast`, `g_slow`, `η` | — (öğrenmez) |
+
+Bir akış adımı:
+1. `x_norm, x̄ = encoder(x_t)`
+2. `s = backbone(x_norm)`
+3. `v̂, r̄ = decision(s, g)` → skorlanır
+4. `e_cer = x̄_t − x̂_smooth(t)` → `cerebellum.update(e_cer)`
+5. `a, g, η = affect(e_cer)`
+6. `decision.update(e_v, η)`
+7. `x̂_smooth(t+1) = cerebellum(r̄, v̂)`

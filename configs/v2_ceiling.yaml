@@ -1,0 +1,25 @@
+# Faz V0: 4 ms ızgarada tavan ölçümü (experiments/v2_ceiling.py). KR-033'ün Δt = 4 ms sürümü.
+# Rapor seed'leri, test raporlanır; tüm seçimler (λ, geçmiş uzunluğu, gizli boyut, erken durdurma) val'de.
+base: v2_base.yaml
+
+experiment:
+  name: v2_ceiling
+
+ceiling:
+  wiener:
+    block_ms: 20.0           # geçmiş, bu genişlikte nedensel kutu toplamlarıyla özetlenir (4 ms'de 5 adım)
+    n_blocks: [5, 10, 20]    # 100 / 200 / 400 ms geçmiş; val'de seçilir
+    report_blocks: 10        # tabloda ayrıca sabit raporlanan (200 ms, KR-033'teki H = 10'un karşılığı)
+    ridge_grid: [1.0e-1, 1.0, 1.0e+1, 1.0e+2, 1.0e+3, 1.0e+4, 1.0e+5, 1.0e+6]
+    chunk: 50000             # Gram matrisi bu kadar satırlık parçalarla birikir (bellek)
+  gru:                       # experiments/ceiling.py ile aynı model ve eğitim; yalnızca BPTT uzunluğu ms olarak sabit
+    hidden_grid: [128, 256]
+    num_layers: 1
+    input_dropout: 0.2
+    lr: 2.0e-3
+    weight_decay: 1.0e-5
+    grad_clip: 1.0
+    streams: 16
+    chunk_ms: 1000.0         # BPTT uzunluğu (20 ms'deki 50 adım = 1 s ile aynı süre); 4 ms'de 250 adım
+    max_epochs: 150
+    patience: 15
