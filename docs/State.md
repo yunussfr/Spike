@@ -2,7 +2,7 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Spike v2, aktif faz V0 (`docs/PhasesV2.md`); kalan tek çıkış kriteri 4 ms tavanının Loco oturumları (koşu sürüyor). v1 Faz 6 kayma deneyi askıda.
+**Şu an:** Spike v2, Faz V0 tamamlandı (KR-037); sıradaki V1 (kodlayıcı). 4 ms tavanı GRU Indy 0,708 / Loco 0,616 (alt sınır). v1 Faz 6 kayma deneyi askıda.
 **Açık kararlar:** v2 — plif sıfırlama gecikmesi, beyincik girdisi, bias güncellemesi (ARCHITECTURE.md §12.10); epoch bütçesi V2'de (KR-036). v1 — θ(τ) "geçici", `γ_rec` = 1.0.
 
 ---
@@ -14,14 +14,17 @@ Her gün sonunda güncellenir. En yeni gün en üstte.
 - [x] `configs/v2_base.yaml`, `configs/v2_ceiling.yaml`, `experiments/v2_ceiling.py`, `experiments/v2_bench.py`.
 - [x] KR-035: bölme 80/10/10 (v1 ile aynı), kod `src/v2/`, Day-0 = primat başına ilk oturum. ARCHITECTURE.md §12.10 nokta 1–2 kapandı.
 - [x] KR-036: epoch süresi ölçümü V2'ye ertelendi (omurga yokken prototip ölçüyordu).
-- [ ] 4 ms tavanı (`runs/20261103-214626_v2_ceiling_seeds0-1-2-3-4`): Indy bitti, Loco sürüyor.
+- [x] 4 ms tavanı (`runs/20261103-214626_v2_ceiling_seeds0-1-2-3-4`, KR-037). V0 kapandı.
 
-  | Oturum | Wiener 400 ms (test) | GRU test R² (ort., 5 seed) |
-  |---|---|---|
-  | indy_20170131_02 | 0,580 | 0,752 |
-  | indy_20160630_01 | 0,359 | 0,597 |
-  | indy_20160622_01 | 0,599 | 0,775 |
-  | loco_20170301_05 | 0,518 | 0,629 (4/5 seed) |
+  | Oturum | Wiener 400 ms (test) | GRU 4 ms (5 seed) | GRU 20 ms (KR-033) |
+  |---|---|---|---|
+  | indy_20170131_02 | 0,580 | 0,752 | 0,779 |
+  | indy_20160630_01 | 0,359 | 0,597 | 0,623 |
+  | indy_20160622_01 | 0,599 | 0,775 | 0,806 |
+  | loco_20170301_05 | 0,518 | 0,632 | 0,689 |
+  | loco_20170215_02 | 0,430 | 0,616 | 0,662 |
+  | loco_20170210_03 | 0,348 | 0,600 | 0,705 |
+  | **Indy / Loco ort.** | 0,513 / 0,432 | **0,708 / 0,616** | 0,736 / 0,685 |
 
 **Etkisi**
 - `indy_20160630_01`'de GRU tavanı (0,597) v2 hedefinin (≥ 0,65) altında; bu oturumda hedef gerçekçi değil, değerlendirme tavana göre yapılmalı.

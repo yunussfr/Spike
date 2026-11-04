@@ -591,7 +591,7 @@ Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt 
 - v1'in gerçek veride ateşleme oranı 0,009–0,020'dir (KR-014, KR-031); spesifikasyondaki "%1–2" teşhisi doğru.
 
 İlgili fazda kapatılacak açık noktalar:
-1. **Bölme protokolü** (V0): spesifikasyon 65/10/25, v1 80/10/10, NeuroBench 75/25. → **Kapandı (KR-035): 80/10/10, v1 ile aynı.**
+1. **Bölme protokolü** (V0): spesifikasyon 65/10/25 (Zenke Lab RSNN ile aynı), v1 ve NeuroBench resmî yükleyicisi 80/10/10. → **Kapandı (KR-035): 80/10/10; literatürle kıyas yaklaşık, ayrıntı KR-035'te.**
 2. **Kod yerleşimi** (V0): öneri `src/v2/` altında ayrı modüller; v1 sınıfları ve testleri korunur. → **Kapandı (KR-035): `src/v2/`, `tests/v2/`, `configs/v2_*.yaml`.**
 3. **Sıfırlama gecikmesi** (V2): referans `plif` kodunda yumuşak sıfırlama s(t−1) ile uygulanıyor (bir adım gecikmeli). Bilinçli mi, düzeltilecek mi?
 4. **Beyincik girdisi döngüsü** (V5): r̄ kapılanmış izlerin ortalaması; g a(t)'ye, a(t) beyincik hatasına bağlı. Beyinciğe kapılanmamış iz mi verilmeli?

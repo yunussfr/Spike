@@ -17,7 +17,9 @@ Kurallar:
 
 ---
 
-## Faz V0 — Altyapı, veri ve 4 ms tavanı
+## Faz V0 — Altyapı, veri ve 4 ms tavanı  ✅ Tamamlandı (2026-11-04)
+
+> Sonuç: 4 ms veri ve 80/10/10 bölme hazır (KR-035). 4 ms test R²: GRU Indy 0,708 / Loco 0,616, Wiener (400 ms) 0,513 / 0,432 (KR-037). GRU 20 ms'deki değerinin altında (Indy −0,03, Loco −0,07), yani alt sınır. Bütçe ölçümü V2'de (KR-036). Testler 153/153. Koşu: `runs/20261103-214626_v2_ceiling_seeds0-1-2-3-4`.
 
 **Hedef:** v2 kodunu v1'i bozmadan yazabilecek iskelet ve yeni protokolün tavan ölçümü.
 
@@ -37,7 +39,7 @@ Kurallar:
 
 **Çıkış kriteri:**
 - 4 ms veri ve bölmeler hazır, protokol KR olarak kayıtlı. ✔ (KR-035)
-- 4 ms GRU tavan tablosu (6 oturum, 5 seed) var.
+- 4 ms GRU tavan tablosu (6 oturum, 5 seed) var. ✔ (KR-037)
 - ~~Epoch süresi ölçülmüş~~ → V2 çıkış kriterine taşındı (KR-036).
 
 ---

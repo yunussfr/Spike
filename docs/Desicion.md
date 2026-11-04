@@ -552,8 +552,12 @@ Her kayıt:
   - **Pencereler:** 2000 ms uzunluk, 1000 ms kayma, yalnızca train diliminden.
 - **Alternatifler:**
   - Spesifikasyonun 65/10/25'i: test daha büyük, ama v1 sonuçları ve KR-033 tavanı ile doğrudan karşılaştırma kaybolur. Seçilmedi.
-  - NeuroBench 75/25: val dilimi yok; ayar test üstünde yapılmak zorunda kalır (kural 9). Seçilmedi.
-- **Not:** Bölme v1 ile aynı olduğu için v1 sonuçları (KR-033, Faz 6a) v2 ile aynı val/test diliminde karşılaştırılabilir. Test %10 olduğundan NeuroBench literatüründeki (%25 test) sayılarla birebir kıyas yapılmaz.
+- **Not:** Bölme v1 ile aynı olduğu için v1 sonuçları (KR-033, Faz 6a) v2 ile aynı val/test diliminde karşılaştırılabilir. 80/10/10, NeuroBench resmî yükleyicisinin varsayılanıdır (`train_ratio=0.8`, segment sırasıyla).
+- **Literatür karşılaştırması (2026-11-04 taraması; kullanıcı 80/10/10'da kalmayı seçti):**
+  - v2 spesifikasyonu Zenke Lab RSNN protokolüyle (arXiv 2409.01762) neredeyse aynıdır: 4 ms, 2 s pencere, maymun başına ön-eğitim + oturum başına ince ayar, RMSE, 5 seed. Fark: onlar 65/10/25 kullanır. "R² ≥ 0,65–0,70" hedefi oradaki tinyRSNN (0,660) / bigRSNN (0,698) ortalamalarıdır.
+  - bigRSNN oturum başına: I1 0,770, I2 0,585, I3 0,772, L1 0,698, L2 0,629, L3 0,734. NeuroBench SNN tabanı ort. 0,581, SNN_Flat 0,633.
+  - Bölmeler farklı olduğundan bu sayılarla kıyas **yaklaşıktır** (dış referans). Ana referans 4 ms iç tavanıdır. Birebir kıyas gerekirse sonuç fazında 65/10/25 ile ayrı bir değerlendirme koşusu yapılır; ana bölme değişmez.
+  - Günler arası etiketsiz SNN uyumu için en yakın iş: Membrane Potential Alignment (arXiv 2606.14866; Indy, 50/25/25, 10 hedef gün, uyumsuz 0,09 → uyumlu 0,33; LoRA + KL, gradyanlı). V6'da bağlam olarak raporlanır.
 - **Durum:** Kodda uygulandı (`src/v2/data.py`, `configs/v2_base.yaml`), testler `tests/v2/test_v0_data.py`.
 
 ### KR-036 — Hesap bütçesi ölçümü Faz V2'ye ertelendi
@@ -561,6 +565,32 @@ Her kayıt:
 - **Karar (kullanıcı, 2026-11-04):** Bütçe ölçümü Faz V2'ye taşındı; gerçek omurga yazıldığında aynı betikle (prototip yerine `src/v2` omurgası) ölçülür ve epoch sayıları gerekiyorsa o zaman KR ile güncellenir. V0 çıkış kriterinden çıkarıldı.
 - **Etkisi:** V3 ön-eğitimi başlamadan önce ölçüm yine yapılmış olur; prototip sayısına dayanarak erken karar verilmez.
 - **Durum:** `experiments/v2_bench.py` ve `bench` config bloğu depoda kalır; V2'de güncellenecek.
+
+### KR-037 — 4 ms tavanı: GRU Indy 0,708 / Loco 0,616; 20 ms tavanının altında (Faz V0 kapanışı)
+- **Koşu:** `experiments/v2_ceiling.py`, `configs/v2_ceiling.yaml`, `runs/20261103-214626_v2_ceiling_seeds0-1-2-3-4`.
+  - Δt = 4 ms, 80/10/10 (KR-035), tahmin ve skor her 4 ms adımında, test R².
+  - Wiener: 20 ms'lik nedensel kutu toplamları, 100/200/400 ms geçmiş; λ ve geçmiş val'de.
+  - GRU: KR-033 ile aynı model ve eğitim (gizli 128/256 val'de, TBPTT 16 akış × 1 s, erken durdurma). 5 seed.
+  - Koşu v2 dosyaları commit edilmeden başladı (`meta.json`: 33d5036, dirty); kod sonra değişmeden `a0ad343`'te commit edildi.
+
+  | Oturum | Wiener 200 ms | Wiener 400 ms (val'de seçilen) | GRU 4 ms | GRU 20 ms (KR-033) | Fark |
+  |---|---|---|---|---|---|
+  | indy_20170131_02 | 0,513 | 0,580 | 0,752 ± 0,019 | 0,779 | −0,027 |
+  | indy_20160630_01 | 0,356 | 0,359 | 0,597 ± 0,014 | 0,623 | −0,026 |
+  | indy_20160622_01 | 0,508 | 0,599 | 0,775 ± 0,013 | 0,806 | −0,031 |
+  | loco_20170301_05 | 0,472 | 0,518 | 0,632 ± 0,008 | 0,689 | −0,057 |
+  | loco_20170215_02 | 0,396 | 0,430 | 0,616 ± 0,020 | 0,662 | −0,046 |
+  | loco_20170210_03 | 0,294 | 0,348 | 0,600 ± 0,029 | 0,705 | −0,105 |
+  | **Indy ort.** | 0,459 | 0,513 | **0,708** | 0,736 | −0,028 |
+  | **Loco ort.** | 0,387 | 0,432 | **0,616** | 0,685 | −0,069 |
+- **Okuma:**
+  1. Wiener 4 ms'de 20 ms ile aynı düzeyde (KR-033 H = 20: Indy 0,513, Loco 0,415). Ön işleme doğru: 4 ms ızgara bilgi kaybettirmiyor.
+  2. GRU 4 ms'de her oturumda 20 ms'den düşük; Loco'da belirgin (−0,07). Sebep büyük olasılıkla eğitim: hiperparametreler 20 ms için seçildi. Loco'da en iyi epoch çoğunlukla 3–6 (erken tepe, sonra val düşüyor). Gizli boyut çoğunlukla ızgaranın üst ucunda (256).
+  3. Bu yüzden 4 ms GRU sayısı gerçek tavan değil, **alt sınırdır**. Dış referans bigRSNN (KR-035, farklı bölme) Loco'da 0,629–0,734; bizim 4 ms GRU'muz bunun altında.
+  4. `indy_20160630_01`'de 4 ms GRU 0,597; v2'nin ≥ 0,65 hedefi bu oturumda tavana göre değerlendirilmeli (bigRSNN de 0,585).
+  5. `loco_20170210_03`'te Wiener λ ızgaranın üst kenarında (1e6); Wiener değeri hafif eksik olabilir.
+- **Sonuç:** V0 çıkış kriterleri sağlandı (KR-036 ile bütçe V2'ye taşındı). v2 için iç referans: 4 ms GRU (Indy 0,708 / Loco 0,616), 20 ms GRU (0,736 / 0,685) ve bigRSNN birlikte raporlanır.
+- **Açık:** Daha sıkı bir 4 ms tavanı istenirse GRU yalnızca val'de yeniden ayarlanabilir (lr, gizli 512, BPTT uzunluğu). V2'deki `tau_gru` karşılaştırması bu sayıya dayanacağı için karar V2 öncesinde verilmeli.
 
 ---
 
