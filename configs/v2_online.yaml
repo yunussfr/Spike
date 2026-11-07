@@ -1,0 +1,14 @@
+# Faz V4: akışlı çevrimiçi çapalı NLMS (experiments/v2_online.py, §12.7–§12.9).
+base: v2_pretrain.yaml
+
+experiment:
+  name: v2_online
+
+online:
+  anchor_decay: 1.0e-4       # α_anchor (§12.11)
+  nlms_eps: 1.0e-4
+  burnin_ms: 10000.0         # akış, skorlanan dilimden bu kadar önce başlar (güncelleme yok)
+  graph_chunk: 500           # CUDA Graph parça uzunluğu (adım, etiket gecikmesinin katı); 0 → adım adım
+  label_delay_ms: 500.0      # etiket y_t, t + 500 ms'de gelir (KR-041); anında etikette y_{t−1} kopyası R² ≈ 0,999
+  eta_grid: [0.0, 1.0e-4, 3.0e-4, 1.0e-3, 3.0e-3, 1.0e-2, 3.0e-2]   # η = 0 → v2-A (donuk); ayar yalnızca val'de
+  homeostasis: [false, true] # çevrimiçi ϑ adaptasyonu kapalı / açık

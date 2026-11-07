@@ -10,7 +10,7 @@ from experiments.common import r2_columns
 from src.data.primate import Session
 from src.utils.config import load_config
 from src.v2.model import V2Model
-from src.v2.train import TrainStep, prepare_session, train_model
+from src.v2.train import TrainStep, pool, prepare_session, train_model
 
 BASE = load_config(Path(__file__).resolve().parents[2] / "configs" / "v2_base.yaml")
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA yok")
@@ -93,3 +93,38 @@ def test_train_never_reads_test_split() -> None:
     res = train_model(m, p, cfg, 0, metric)
     assert res.epochs_run == 2 and torch.isfinite(torch.tensor(res.best_val))
     assert all(torch.isfinite(v).all() for v in res.state.values() if v.is_floating_point())
+
+
+def test_eval_every_and_multi_session_pool() -> None:
+    """Val yalnızca her eval_every epoch'ta ve son epoch'ta; çok oturumda pencereler oturum sınırını aşmaz."""
+    cfg = small_cfg()
+    cfg["train"].update(cuda_graph=False, epochs=7, eval_every=3, patience=100)
+    p1 = prepare_session(cfg, fake_session(), torch.device("cpu"))
+    p2 = prepare_session(cfg, fake_session(n=500), torch.device("cpu"))
+    x, y, starts = pool([p1, p2])
+    assert len(x) == 1100 and len(starts) == len(p1.starts) + len(p2.starts)
+    s2 = starts[len(p1.starts):]
+    assert int(s2.min()) >= 600 and int(s2.max()) + 20 <= 600 + 400       # ikinci oturumun train dilimi
+    assert int(starts[: len(p1.starts)].max()) + 20 <= 400
+    m = V2Model(cfg, 5, 2, "plif")
+    res = train_model(m, [p1, p2], cfg, 0, metric)
+    evald = [r["epoch"] for r in res.history if "val_r2" in r]
+    assert evald == [2, 5, 6]
+    assert "val_r2_fake_20200101_01" in res.history[2]
+
+
+def test_save_anchor_and_stats_from() -> None:
+    cfg = small_cfg()
+    m = V2Model(cfg, 5, 2, "plif")
+    assert not bool(m.readout.anchored)
+    m.readout.save_anchor()
+    with torch.no_grad():
+        m.readout.weight[0].add_(1.0)                                  # başlık değişir, çapa değişmez
+    assert bool(m.readout.anchored)
+    assert torch.allclose(m.readout.w_anchor[0] + 1.0, m.readout.weight[0])
+    a, b = fake_session(), fake_session(n=500)
+    b.x[: b.val_start] *= 0.0                                                 # farklı istatistik
+    pb_own = prepare_session(cfg, b, torch.device("cpu"))
+    pb_a = prepare_session(cfg, b, torch.device("cpu"), stats_from=a)
+    pa = prepare_session(cfg, a, torch.device("cpu"))
+    assert torch.equal(pb_a.y_mu, pa.y_mu) and not torch.equal(pb_own.y_mu, pa.y_mu)

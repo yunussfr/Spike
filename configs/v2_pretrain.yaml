@@ -1,0 +1,18 @@
+# Faz V3: çoklu oturum ön-eğitimi + oturum başına ince ayar + Day-0 modeli (experiments/v2_pretrain.py, §12.8).
+base: v2_base.yaml
+
+experiment:
+  name: v2_pretrain
+
+backbone:
+  mode: plif                 # KR-039
+
+pretrain:
+  epochs: 100                # Aşama 1: primatın tüm oturumlarının train pencereleri
+finetune:
+  epochs: 150                # Aşama 2: hedef oturumun train dilimi; ön-eğitim ağırlıklarından başlar
+  lr: 1.0e-3                 # spesifikasyonda ayrı değer yok; ön-eğitimle aynı (KR-040)
+
+stages: [pretrain, finetune, day0, scratch]   # day0: yalnızca Day-0'da sıfırdan (günler arası model, V4);
+                                              # scratch: hedef oturumda sıfırdan (ön-eğitim karşılaştırması)
+tune_files: [indy_20170131_02, loco_20170215_02]   # ayar koşusunda ince ayar / scratch yalnızca bu oturumlarda

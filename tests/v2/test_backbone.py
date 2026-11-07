@@ -164,11 +164,22 @@ def test_readout_heads_and_gate() -> None:
     r.reset_state(1)
     s = torch.ones(1, 4)
     y, rbar = r.step(s)
-    expected = torch.stack([h(r.traces[k]) for k, h in enumerate(r.heads)]).mean(0)
+    expected = torch.stack([r.traces[k] @ r.weight[k].T + r.bias[k] for k in range(r.K)]).mean(0)
     assert torch.allclose(y, expected)
     r.reset_state(1)
     _, rbar_g = r.step(s, g_fast=2.0, g_slow=0.5)
     assert torch.allclose(rbar_g[0, :2], 2 * rbar[0, :2]) and torch.allclose(rbar_g[0, 2:], 0.5 * rbar[0, 2:])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA yok")
+def test_stream_predict_graph_matches_eager() -> None:
+    dev = torch.device("cuda")
+    m = model("plif").to(dev)
+    m.eval()
+    x = x_seq(B=1, L=300)[0].to(dev)
+    a, ra = stream_predict(m, x, 70, 300, n_streams=3, burnin=40)
+    b, rb = stream_predict(m, x, 70, 300, n_streams=3, burnin=40, chunk=32)
+    assert torch.allclose(a, b, atol=1e-5) and torch.allclose(ra, rb, atol=1e-6)
 
 
 @pytest.mark.parametrize("mode", MODES)

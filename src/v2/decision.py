@@ -3,7 +3,7 @@
   r^(k)(t) = κ_k·r^(k)(t−1) + (1 − κ_k)·s(t),   κ_k = exp(−Δt/τ_read,k)
   v̂(t)     = (1/K) Σ_k (W^(k)·r̃^(k)(t) + b^(k)),   r̃ = r ⊙ [g_fast·1, g_slow·1]
 
-Bu fazda (V2) yalnızca çevrimdışı ileri yol vardır; çapa kaydı ve çevrimiçi çapalı NLMS V3–V4'te eklenir.
+Çevrimdışı ileri yol ve çapa kaydı (V3) burada; çevrimiçi çapalı NLMS akışı `src/v2/online.py`'de (V4).
 """
 
 import math
@@ -18,8 +18,22 @@ class MultiHeadReadout(nn.Module):
         super().__init__()
         self.N, self.half, self.K = num_neurons, num_neurons // 2, len(taus_ms)
         self.register_buffer("kappa", torch.tensor([math.exp(-dt_ms / t) for t in taus_ms]).view(-1, 1, 1))  # [K, 1, 1]
-        self.heads = nn.ModuleList(nn.Linear(num_neurons, out_dim) for _ in taus_ms)
+        # K başlık tek tensörde (tek çekirdek; ayrı nn.Linear'lar eğitimi ~%60 yavaşlatıyordu, KR-040).
+        # Başlatma nn.Linear ile aynı dağılım: U(−1/√N, 1/√N).
+        bound = 1.0 / math.sqrt(num_neurons)
+        self.weight = nn.Parameter(torch.empty(self.K, out_dim, num_neurons).uniform_(-bound, bound))   # [K, D, N]
+        self.bias = nn.Parameter(torch.empty(self.K, out_dim).uniform_(-bound, bound))                  # [K, D]
+        self.register_buffer("w_anchor", torch.zeros(self.K, out_dim, num_neurons))   # W_0^(k), Day-0 sonunda donar
+        self.register_buffer("b_anchor", torch.zeros(self.K, out_dim))
+        self.register_buffer("anchored", torch.tensor(False))
         self.reset_state(1)
+
+    @torch.no_grad()
+    def save_anchor(self) -> None:
+        """Aşama 2 sonu: başlık ağırlıklarını çapa W_0 olarak dondurur (§12.7, §12.8)."""
+        self.w_anchor.copy_(self.weight)
+        self.b_anchor.copy_(self.bias)
+        self.anchored.fill_(True)
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any], num_neurons: int, out_dim: int) -> "MultiHeadReadout":
@@ -35,5 +49,5 @@ class MultiHeadReadout(nn.Module):
         """s: [B, N] → v̂: [B, D_out], r̄: [B, N] (başlıkların kapılı izlerinin ortalaması, beyincik için)."""
         self.traces = self.kappa * self.traces + (1.0 - self.kappa) * s.unsqueeze(0)
         gated = self.traces if g_fast == g_slow == 1.0 else self.traces * self.gate(g_fast, g_slow)
-        v_hat = torch.stack([head(gated[k]) for k, head in enumerate(self.heads)]).mean(0)
+        v_hat = torch.einsum("kbn,kdn->bd", gated, self.weight) / self.K + self.bias.mean(0)   # [B, D]
         return v_hat, gated.mean(0)

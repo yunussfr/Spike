@@ -1,6 +1,6 @@
 """Çevrimdışı eğitim döngüsü (ARCHITECTURE.md §12.8): train pencereleri, AdamW + cosine, RMSE + λ·L_homeo.
 
-Model seçimi val R² ile (her epoch akış değerlendirmesi, `stream_predict`); test bu modülde hiç görülmez.
+Model seçimi val R² ile (her `eval_every` epoch'ta akış değerlendirmesi, `stream_predict`); test bu modülde hiç görülmez.
 """
 
 import copy
@@ -31,12 +31,17 @@ class Prepared:
     starts: torch.Tensor                  # [W] train pencere başlangıçları
 
 
-def prepare_session(cfg: dict[str, Any], s: Session, device: torch.device) -> Prepared:
-    tr = s.split("train")
+def prepare_session(cfg: dict[str, Any], s: Session, device: torch.device, stats_from: Session | None = None) -> Prepared:
+    """Kodlayıcı ve hedef istatistikleri `stats_from`'un train diliminden (varsayılan: s'nin kendisi).
+
+    Günler arası değerlendirmede Day-k oturumu Day-0'ın istatistikleriyle kodlanır (Day-k'ye uyum yok).
+    """
+    ref = stats_from or s
+    tr = ref.split("train")
     enc = SpikeEncoderV2.from_config(cfg, s.D_in)
-    enc.fit(s.x[tr])                                                         # KV6: yalnızca train
+    enc.fit(ref.x[tr])                                                       # KV6: yalnızca train
     if cfg["train"]["target_norm"]:
-        mu, sd = s.y[tr].mean(0), s.y[tr].std(0)
+        mu, sd = ref.y[tr].mean(0), ref.y[tr].std(0)
     else:
         mu, sd = torch.zeros(s.y.shape[1]), torch.ones(s.y.shape[1])
     return Prepared(s, enc.normalize(s.x).to(device), ((s.y - mu) / sd).to(device), mu.to(device), sd.to(device),
@@ -58,7 +63,7 @@ def evaluate(model: V2Model, p: Prepared, part: str, cfg: dict[str, Any], metric
     t = cfg["train"]
     sl = p.session.split(part)
     burnin = ms_to_steps(t["eval_burnin_ms"], cfg["time"]["dt_ms"])
-    pred, rate = stream_predict(model, p.x, sl.start, sl.stop, t["eval_streams"], burnin)
+    pred, rate = stream_predict(model, p.x, sl.start, sl.stop, t["eval_streams"], burnin, t["eval_graph_chunk"])
     y_hat = pred * p.y_sd + p.y_mu
     y = p.y[sl] * p.y_sd + p.y_mu
     h = model.backbone.half
@@ -124,40 +129,61 @@ class TrainStep:
         return float(self.static_loss)
 
 
-def train_model(model: V2Model, p: Prepared, cfg: dict[str, Any], seed: int, metric: Metric,
+def pool(ps: list[Prepared]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Oturumları uç uca ekler; pencere başlangıçları kaydırılır. Her pencere kendi oturumunun train diliminde
+    kaldığı için oturum sınırını aşmaz. → x [Σn, C], y [Σn, D], starts [ΣW]"""
+    if len(ps) == 1:
+        return ps[0].x, ps[0].y, ps[0].starts
+    offs = torch.tensor([0] + [len(p.x) for p in ps[:-1]]).cumsum(0)
+    return (torch.cat([p.x for p in ps]), torch.cat([p.y for p in ps]),
+            torch.cat([p.starts + int(o) for p, o in zip(ps, offs)]))
+
+
+def train_model(model: V2Model, ps: Prepared | list[Prepared], cfg: dict[str, Any], seed: int, metric: Metric,
                 epochs: int | None = None, log: Callable[[dict[str, float]], None] | None = None) -> TrainResult:
+    """Bir ya da birden çok oturumun (aynı kanal sayısı) train pencereleriyle eğitir.
+
+    Val R² her `eval_every` epoch'ta ve son epoch'ta ölçülür (çok oturumda oturumların ortalaması); en iyi
+    değerlendirme durumu geri yüklenir. `patience`: en iyi değerlendirmeden bu yana geçen epoch sayısı.
+    """
+    ps = [ps] if isinstance(ps, Prepared) else ps
     t = cfg["train"]
     epochs = epochs or t["epochs"]
     L = ms_to_steps(cfg["windows"]["length_ms"], cfg["time"]["dt_ms"])
-    B = min(t["batch"], len(p.starts))
-    trainer = TrainStep(model, cfg, epochs, B, L, p.x.shape[1], p.y.shape[1], p.x.device)
+    x, y, starts = pool(ps)
+    B = min(t["batch"], len(starts))
+    trainer = TrainStep(model, cfg, epochs, B, L, x.shape[1], y.shape[1], x.device)
     gen = torch.Generator().manual_seed(seed)
 
-    best, best_ep, best_state, bad, hist, sec = -float("inf"), -1, None, 0, [], []
+    best, best_ep, best_state, hist, sec = -float("inf"), -1, None, [], []
     for ep in range(epochs):
         t0 = time.time()
         model.train()
-        order = p.starts[torch.randperm(len(p.starts), generator=gen)]
+        order = starts[torch.randperm(len(starts), generator=gen)]
         tot, nb = 0.0, 0
         for i in range(0, len(order) - B + 1, B):                            # drop_last: sabit batch (TrainStep)
-            st = order[i: i + B].to(p.x.device)
-            tot += trainer(gather_windows(p.x, st, L), gather_windows(p.y, st, L))   # [B, L, C], [B, L, D]
+            st = order[i: i + B].to(x.device)
+            tot += trainer(gather_windows(x, st, L), gather_windows(y, st, L))       # [B, L, C], [B, L, D]
             nb += 1
         trainer.sched.step()
         train_sec = time.time() - t0
-        ev = evaluate(model, p, "val", cfg, metric)
-        row = {"epoch": ep, "loss": tot / nb, "val_r2": ev["r2"], "train_sec": train_sec,
-               "eval_sec": time.time() - t0 - train_sec, **{f"val_{k}": v for k, v in ev.items() if k != "r2"}}
-        hist.append(row)
         sec.append(train_sec)
+        row: dict[str, float] = {"epoch": ep, "loss": tot / nb, "train_sec": train_sec}
+        last = ep == epochs - 1
+        if (ep + 1) % t["eval_every"] == 0 or last:
+            evs = [evaluate(model, p, "val", cfg, metric) for p in ps]
+            r2 = sum(e["r2"] for e in evs) / len(evs)
+            row.update(val_r2=r2, eval_sec=time.time() - t0 - train_sec,
+                       **{f"val_{k}": sum(e[k] for e in evs) / len(evs) for k in evs[0] if k != "r2"})
+            if len(ps) > 1:
+                row.update({f"val_r2_{p.session.name}": e["r2"] for p, e in zip(ps, evs)})
+            if r2 > best:
+                best, best_ep = r2, ep
+                best_state = copy.deepcopy(model.state_dict())
+        hist.append(row)
         if log:
             log(row)
-        if ev["r2"] > best:
-            best, best_ep, bad = ev["r2"], ep, 0
-            best_state = copy.deepcopy(model.state_dict())
-        else:
-            bad += 1
-            if bad >= t["patience"]:
-                break
+        if ep - best_ep >= t["patience"] and "val_r2" in row:
+            break
     model.load_state_dict(best_state)
     return TrainResult(best, best_ep, len(hist), sum(sec) / len(sec), best_state, hist)

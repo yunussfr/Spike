@@ -65,21 +65,23 @@ backbone:                    # TemporalBackbone (§12.4)
     theta_min: 0.3
     theta_max: 2.5
 
-readout:                     # sızıntılı entegratör başlıkları (§12.7); V2'de tek başlık, V3'te 5
-  taus_ms: [64.0]
+readout:                     # sızıntılı entegratör başlıkları (§12.7); V2 koşusu tek başlık [64] kullandı (v2_backbone.yaml)
+  taus_ms: [16.0, 32.0, 64.0, 100.0, 160.0]
 
 train:                       # çevrimdışı eğitim (§12.8)
   batch: 32
   lr: 1.0e-3
   weight_decay: 1.0e-4
   epochs: 150
-  patience: 20               # val R² bu kadar epoch iyileşmezse durur (en iyi durum geri yüklenir)
+  patience: 20               # en iyi val R²'den bu yana bu kadar epoch geçerse durur (en iyi durum geri yüklenir)
+  eval_every: 5              # val değerlendirmesi her 5 epoch'ta bir ve son epoch'ta (eğitimden pahalı, KR-040)
   grad_clip: 1.0             # spesifikasyonda yok; 500 adımlık BPTT için eklendi (KR-038)
   target_norm: true          # hız train ortalaması/std'siyle standartlaştırılır; R² ham ölçekte
   cuda_graph: true           # CUDA'da eğitim adımı CUDA Graph ile yakalanır (~25× hız, KR-038); son eksik batch atlanır
   graph_warmup: 3            # yakalamadan önceki normal (eager) eğitim adımı sayısı
   eval_streams: 16           # val/test dilimi bu kadar paralel ardışık akışa bölünür
   eval_burnin_ms: 10000.0    # her akış, skorlanan parçasından bu kadar önce başlar (τ_max = 400 ms'nin 25 katı)
+  eval_graph_chunk: 500      # CUDA'da değerlendirme akışı bu kadar adımlık CUDA Graph parçalarıyla (0 → adım adım)
 
 bench:                       # hesap bütçesi ölçümü (experiments/v2_bench.py, KR-036): gerçek src/v2 omurgası
   modes: [plif, spiking_gru, tau_gru]

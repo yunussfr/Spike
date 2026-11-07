@@ -4,6 +4,12 @@ base: v2_base.yaml
 experiment:
   name: v2_backbone
 
+readout:
+  taus_ms: [64.0]            # V2: tek başlık (KR-039 koşusu)
+
+train:
+  eval_every: 1              # KR-039 koşusu her epoch değerlendirdi
+
 v2_backbone:
   files: [indy_20170131_02, loco_20170215_02]   # primat başına en kısa oturum (v1 ayar oturumlarıyla aynı)
   modes: [plif, spiking_gru, tau_gru]
