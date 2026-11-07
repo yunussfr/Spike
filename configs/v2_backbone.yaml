@@ -1,0 +1,10 @@
+# Faz V2: omurga modu karşılaştırması (experiments/v2_backbone.py). Ayar seed'leri, yalnızca val.
+base: v2_base.yaml
+
+experiment:
+  name: v2_backbone
+
+v2_backbone:
+  files: [indy_20170131_02, loco_20170215_02]   # primat başına en kısa oturum (v1 ayar oturumlarıyla aynı)
+  modes: [plif, spiking_gru, tau_gru]
+  ceiling_run: runs/20261103-214626_v2_ceiling_seeds0-1-2-3-4   # 4 ms GRU val R² (KR-037)

@@ -2,8 +2,31 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Spike v2, Faz V0 tamamlandı (KR-037); sıradaki V1 (kodlayıcı). 4 ms tavanı GRU Indy 0,708 / Loco 0,616 (alt sınır). v1 Faz 6 kayma deneyi askıda.
-**Açık kararlar:** v2 — plif sıfırlama gecikmesi, beyincik girdisi, bias güncellemesi (ARCHITECTURE.md §12.10); epoch bütçesi V2'de (KR-036). v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+**Şu an:** Spike v2, V0–V2 tamamlandı; sıradaki V3 (ön-eğitim + Day-0). Eğitilen plif tek oturumda val R² Indy 0,769 / Loco 0,658, 4 ms GRU tavanının üstünde (KR-039). v1 Faz 6 kayma deneyi askıda.
+**Açık kararlar:** v2 — beyincik girdisi (V5), bias güncellemesi (V4) (ARCHITECTURE.md §12.10). Ana mod plif (karar); Loco KV7 ihlali raporlanıyor. v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+
+---
+
+## 2026-11-05 — Faz V1 + V2: kodlayıcı, omurga, CUDA Graph, mod karşılaştırması (KR-038, KR-039)
+
+**Yaptıklarım**
+- [x] `src/v2/encoder.py`, `backbone.py`, `decision.py`, `model.py`, `train.py`; testler `tests/v2/` (37 test).
+- [x] Eğitim adımı CUDA Graph ile: batch başına 2,4 s → 0,094 s. Bütçe (KR-036 kapandı): 4 ms'de seed başına tam protokol plif ~0,6–0,8 saat.
+- [x] `spiking_gru` ϑ başlangıcı 0,5 (ϑ = 1 ile hiç ateşlemiyordu).
+- [x] Mod karşılaştırması `runs/20261104-233122_v2_backbone_seeds100-101-102` (ayar seed'leri, val):
+
+  | | plif | spiking_gru | tau_gru | 4 ms GRU tavanı |
+  |---|---|---|---|---|
+  | indy_20170131_02 | 0,769 | 0,688 | 0,770 | 0,714 |
+  | loco_20170215_02 | 0,658 | 0,535 | 0,666 | 0,571 |
+
+**Etkisi**
+- Eğitilen omurga v1'in ~2,5–4 katı val R²; plif ≈ tau_gru, yani spike'a geçmek kaybettirmiyor.
+- V1 kriteri tanım gereği sağlandı: 4 ms'de sayımlar ikili, kodlayıcı afin.
+
+**Açık**
+- 2026-11-07: ana mod plif onaylandı; Loco KV7 ihlali düzeltilmeden raporlanacak (KR-039).
+- Değişiklikler commit edilmedi.
 
 ---
 

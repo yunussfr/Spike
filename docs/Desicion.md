@@ -591,6 +591,55 @@ Her kayıt:
   5. `loco_20170210_03`'te Wiener λ ızgaranın üst kenarında (1e6); Wiener değeri hafif eksik olabilir.
 - **Sonuç:** V0 çıkış kriterleri sağlandı (KR-036 ile bütçe V2'ye taşındı). v2 için iç referans: 4 ms GRU (Indy 0,708 / Loco 0,616), 20 ms GRU (0,736 / 0,685) ve bigRSNN birlikte raporlanır.
 - **Açık:** Daha sıkı bir 4 ms tavanı istenirse GRU yalnızca val'de yeniden ayarlanabilir (lr, gizli 512, BPTT uzunluğu). V2'deki `tau_gru` karşılaştırması bu sayıya dayanacağı için karar V2 öncesinde verilmeli.
+  - **Karar (kullanıcı, 2026-11-04):** GRU yeniden ayarlanmadı; mevcut 4 ms GRU ve bigRSNN referans olarak kullanılır. V1 ve V2 birlikte yapılır.
+
+### KR-038 — Faz V1 + V2 uygulama kararları: kodlayıcı, omurga, eğitim döngüsü, CUDA Graph
+- **Kodlayıcı (V1):** `src/v2/encoder.py`, testler `tests/v2/test_encoder.py`. Spesifikasyondaki sabitler config'te (`encoder.*`).
+  - **Bulgu:** 4 ms'de sayımlar ikili (6 oturumda en fazla 1 spike/kutu). Bu yüzden Anscombe + z-skoru + tanh kırpma, kanal başına iki değerli, yani **afin** bir dönüşüm. Standartlaştırılmış ridge afin dönüşüme duyarsız olduğundan kodlanmış ve ham girdinin Wiener R²'si birebir aynı (ölçülen 5 oturumda val ve test aynı basamakta; altıncı oturum aynı nedenle durduruldu, `experiments/v2_encoder_check.py`).
+  - **Sonuç:** V1 çıkış kriteri ("bilgi kaybı yok") tanım gereği sağlanıyor. Anscombe ve kırpmanın gerçek etkisi yalnızca kutuda birden çok spike olan Δt'lerde (≥ 8 ms) görülür. 4 ms'de kodlayıcının işi fiilen kanal başına standartlaştırma.
+- **Omurga (V2):** `src/v2/backbone.py`, `decision.py`, `model.py`, testler `tests/v2/test_backbone.py` (22 test).
+  - §12.10 nokta 3 (sıfırlama gecikmesi) kapandı: V(t) = β·V + (1−β)·I − ϑ·s(t−1), snnTorch `Leaky` ile aynı standart biçim; değiştirilmedi.
+  - `spiking_gru` ϑ başlangıcı 0,5 (`theta_init_spiking_gru`). Spesifikasyondaki ϑ = 1 ile GRU durumu (−1, 1) aralığında kaldığı için hiç spike oluşmadı (duman koşusu: oran 0, val R² 0,000).
+  - V2'de okuma tek başlık, τ_read = 64 ms (`readout.taus_ms`); 5 başlık V3'te.
+- **Eğitim döngüsü:** `src/v2/train.py`, testler `tests/v2/test_train.py`.
+  - Spesifikasyona eklenenler: gradyan kırpma 1,0 (`train.grad_clip`), hedef standartlaştırma (train μ/σ; R² ham ölçekte), erken durdurma (`patience` 20, val R²).
+  - Val/test değerlendirmesi: dilim 16 ardışık akışa bölünür, her akış kendi parçasından 10 s önce sıfır durumla başlar (τ_mem üst sınırı 400 ms'nin 25 katı). Bu, tüm dosyayı tek akışla yürütmeye yakın; test `test_stream_predict_matches_direct`.
+  - Test dilimi eğitime ve seçime girmiyor (`test_train_never_reads_test_split`: test NaN iken eğitim sonlu).
+- **CUDA Graph (hız):** Windows'ta adım adım döngü çekirdek başlatma yüküyle sınırlıydı (GPU kullanımı %15, batch başına 2,4 s). Tüm eğitim adımı (ileri + BPTT + kırpma + AdamW) bir kez yakalanıp oynatılıyor: batch başına 0,094 s (~25×).
+  - Bedeli: sabit batch boyutu, yani her epoch'ta son eksik batch atlanıyor (karıştırma her epoch değiştiği için her pencere yine görülüyor).
+  - Eager ile aynı sonucu verdiği (dropout 0) ve dropout'un her oynatmada yeniden örneklendiği test edildi. `train.cuda_graph: false` → eski yol.
+- **Hesap bütçesi (KR-036 kapandı):** `experiments/v2_bench.py` gerçek omurgayla, `runs/20261104-232917_v2_bench_seed0`. Val değerlendirmesi hariç, seed başına tam protokol (100 ön-eğitim + 3 × 150 ince ayar epoch'u):
+
+  | Δt | plif | spiking_gru | tau_gru |
+  |---|---|---|---|
+  | 4 ms, Indy | 0,83 sa | 1,30 sa | 1,14 sa |
+  | 4 ms, Loco | 0,59 sa | 1,17 sa | 1,04 sa |
+  | 8 ms, Indy | 0,40 sa | 0,69 sa | 0,63 sa |
+  - 4 ms uygulanabilir; Δt varsayılanı değişmiyor. Val değerlendirmesi epoch başına ~6–10 s ekliyor ve eğitimden pahalı; V3'te gerekirse seyrek değerlendirme.
+
+### KR-039 — Omurga modu karşılaştırması: eğitilen plif tek oturumda 4 ms GRU tavanını geçiyor (Faz V2)
+- **Koşu:** `experiments/v2_backbone.py`, `configs/v2_backbone.yaml`, `runs/20261104-233122_v2_backbone_seeds100-101-102`.
+  - Ayar seed'leri 100–102, yalnızca val; test bölmesine bakılmadı.
+  - Tek oturum, tek başlık (τ_read 64 ms), ön-eğitim yok. En fazla 150 epoch, erken durdurma 20.
+  - GRU tavanı: KR-037 koşusundaki aynı oturumun val R²'si (5 rapor seed'i).
+
+  | Oturum | Mod | val R² | en iyi epoch | oran hızlı / yavaş | GRU tavanı (val) |
+  |---|---|---|---|---|---|
+  | indy_20170131_02 | **plif** | **0,769 ± 0,007** | 58, 45, 19 | 0,035 / 0,021 ✔ | 0,714 |
+  | indy_20170131_02 | spiking_gru | 0,688 ± 0,007 | 42, 77, 59 | 0,037 / 0,035 ✔ | 0,714 |
+  | indy_20170131_02 | tau_gru | 0,770 ± 0,001 | 18, 37, 20 | — | 0,714 |
+  | loco_20170215_02 | **plif** | **0,658 ± 0,021** | 9, 4, 18 | 0,023 / 0,014 ✗ | 0,571 |
+  | loco_20170215_02 | spiking_gru | 0,535 ± 0,011 | 34, 24, 9 | 0,017 / 0,017 ✗ | 0,571 |
+  | loco_20170215_02 | tau_gru | 0,666 ± 0,003 | 19, 8, 17 | — | 0,571 |
+- **Okuma:**
+  1. **Büyük sıçrama:** plif, v1 rezervuarının aynı oturumlardaki val R²'sini (Faz 6a donuk B+Z: Indy 0,304, Loco 0,169; farklı Δt ve tur sayısı) yaklaşık 2,5–4 katına çıkarıyor.
+  2. **tau_gru (sürekli, üst sınır)** 4 ms GRU tavanını Indy +0,056, Loco +0,095 geçiyor. V2 çıkış kriteri ("tavana ≤ 0,03 yakın") fazlasıyla sağlandı. Tavanın alt sınır olduğu (KR-037) burada da görülüyor.
+  3. **plif ≈ tau_gru** (fark Indy −0,001, Loco −0,008): ikili spike'a geçmek bu oturumlarda neredeyse hiç kaybettirmiyor.
+  4. **spiking_gru belirgin geride** (Indy −0,08, Loco −0,12). Epoch başına daha pahalı. Ana hat için uygun değil.
+  5. **Loco'da erken tepe:** en iyi epoch 4–18; küçük oturumda hızla aşırı uyuyor. V3'teki çoklu oturum ön-eğitimi bunu hafifletmeli. plif Loco seed varyansı yüksek (± 0,021).
+  6. **KV7:** plif Indy bandın içinde. Loco'da yavaş alt-popülasyonun ortalama oranı 0,014 < f_min = 0,02 (✗). Her iki oturumda da hiç ateşlemeyen nöronlar var (en düşük nöron oranı 0).
+- **Karar (kullanıcı, 2026-11-07):** ana omurga modu **plif**. Sebep: SNN olarak tau_gru ile aynı R², spiking_gru'dan çok iyi, en ucuz mod. tau_gru üst sınır kontrolü olarak kalır, spiking_gru bırakılır.
+- **KV7 (kullanıcı, 2026-11-07):** Loco'daki ihlal (yavaş alt-popülasyon 0,014 < 0,02) düzeltilmeden **raporlanır** (KR-014 gibi). Homeostaz ayarlanmadı; kural değişmedi. Tablolarda alt-popülasyon oranları ve ✗ işareti her fazda gösterilir; V3'te ön-eğitimle oran yeniden ölçülür.
 
 ---
 

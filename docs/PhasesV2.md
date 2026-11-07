@@ -44,7 +44,9 @@ Kurallar:
 
 ---
 
-## Faz V1 — Kodlayıcı v2 (Anscombe + kanal z-skoru + yumuşak kırpma)
+## Faz V1 — Kodlayıcı v2 (Anscombe + kanal z-skoru + yumuşak kırpma)  ✅ Tamamlandı (2026-11-05)
+
+> Sonuç: `src/v2/encoder.py`, 6 test. 4 ms'de sayımlar ikili olduğundan dönüşüm kanal başına afin; kodlanmış ve ham Wiener R² birebir aynı (KR-038). Bilgi kaybı yok.
 
 **Hedef:** M1/S1 genlik farkını veri katmanında dengeleyen sürekli girdi ve beyincik için yumuşatılmış hedef (§12.3).
 
@@ -63,7 +65,9 @@ Kurallar:
 
 ---
 
-## Faz V2 — Eğitilebilir zamansal omurga (`plif` | `spiking_gru` | `tau_gru`)
+## Faz V2 — Eğitilebilir zamansal omurga (`plif` | `spiking_gru` | `tau_gru`)  ✅ Tamamlandı (2026-11-05)
+
+> Sonuç (ayar seed'leri, val, tek oturum, KR-039): plif Indy 0,769 / Loco 0,658; tau_gru 0,770 / 0,666; spiking_gru 0,688 / 0,535. 4 ms GRU tavanı (val) 0,714 / 0,571. Ana mod: plif (kullanıcı kararı). KV7: plif Loco yavaş alt-popülasyon oranı 0,014 < 0,02 (✗), düzeltilmeden raporlanıyor. Bütçe: 4 ms'de seed başına tam protokol ~0,6–0,8 saat (KR-038). Koşu: `runs/20261104-233122_v2_backbone_seeds100-101-102`.
 
 **Hedef:** 500 hızlı + 500 yavaş alt-popülasyonlu, çevrimdışı eğitilen omurga (§12.4). Önce tek oturumda, tek doğrusal okumayla.
 

@@ -50,8 +50,8 @@ def wiener(cfg: dict[str, Any], s: Session, dt: float) -> list[dict[str, Any]]:
     wc = cfg["ceiling"]["wiener"]
     w = ms_to_steps(wc["block_ms"], dt)
     ch = wc["chunk"]
-    cs = torch.zeros(len(s.x) + 1, s.D_in, dtype=torch.int64)
-    cs[1:] = torch.cumsum(s.x.round().long(), dim=0)                         # [n+1, D]
+    cs = torch.zeros(len(s.x) + 1, s.D_in, dtype=torch.float64)
+    cs[1:] = torch.cumsum(s.x.double(), dim=0)                               # [n+1, D]; sayımlarda tam, kodlanmış girdide de çalışır
     tr, va, te = s.split("train"), s.split("val"), s.split("test")
     rows = []
     for K in wc["n_blocks"]:

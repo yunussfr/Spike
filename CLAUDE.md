@@ -20,9 +20,9 @@ Depoda iki mimari hattı var (ARCHITECTURE.md başındaki "Sürümler" notu):
 
 ## Mevcut durum
 
-- **Aktif hat: Spike v2. Aktif faz: V1 — kodlayıcı v2 (V0 tamamlandı 2026-11-04).** v2 veri katmanı `src/v2/data.py`; protokol KR-035 (80/10/10, Δt 4 ms). 4 ms tavanı GRU Indy 0,708 / Loco 0,616 (alt sınır, KR-037). Epoch bütçesi ölçümü V2'de (KR-036). (Faz bitince bu satırı güncelle.)
+- **Aktif hat: Spike v2. Aktif faz: V3 — çoklu oturum ön-eğitimi + Day-0 + 5 başlıklı okuma (V0–V2 tamamlandı 2026-11-05).** Protokol KR-035 (80/10/10, Δt 4 ms). V2: eğitilen plif tek oturumda val R² Indy 0,769 / Loco 0,658; 4 ms GRU tavanı 0,714 / 0,571 (KR-039). Ana mod plif (karar); Loco'da KV7 ihlali (yavaş alt-popülasyon 0,014) düzeltilmeden raporlanıyor. Eğitim adımı CUDA Graph ile (`train.cuda_graph`, KR-038). (Faz bitince bu satırı güncelle.)
 - v1 son durumu: Faz 3–4 test R² Indy 0,442 / Loco 0,365. Faz 6a: kapılı η eşlenmiş η'yı geçmedi (KR-031, KR-032). KR-033: GRU tavanı Indy 0,736 / Loco 0,685 → kayıp doğrusal okunan temsilde; v2'ye geçişin gerekçesi bu. v1 Faz 6 kayma deneyi askıda.
-- Açık v2 kararları (ARCHITECTURE.md §12.10): plif sıfırlama gecikmesi, beyincik girdisinin kapılanıp kapılanmaması, okuma bias'ının çevrimiçi güncellenmesi, epoch bütçesi (V2, KR-036). Kapananlar: bölme 80/10/10 ve `src/v2/` yerleşimi (KR-035).
+- Açık v2 kararları (ARCHITECTURE.md §12.10): beyincik girdisinin kapılanıp kapılanmaması (V5), okuma bias'ının çevrimiçi güncellenmesi (V4). Kapananlar: bölme 80/10/10 ve `src/v2/` yerleşimi (KR-035), sıfırlama gecikmesi ve epoch bütçesi (KR-038).
 - ARCHITECTURE.md kural değişikliği gerekiyorsa önce kullanıcıya teşhis tablosu getir; dosyayı kullanıcı onayı olmadan değiştirme.
 - Faz sonuçları birlikte değerlendirildikten sonra dokümanlara işlenir: PhasesV2.md (`> Sonuç:`), Desicion.md (KR), State.md (günlük), gerekirse ARCHITECTURE.md §12 ve §11.
 - v1 notu: θ(τ) kalibrasyonu ~1 dk sürer (CPU). v1 testlerinde `tests/conftest.py`'deki oturum fixture'ı `calibrated_reservoir` kullanılır; kalibrasyon gerekmeyen testlerde `from_config(..., calibrate=False)`.

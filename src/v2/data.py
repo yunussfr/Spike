@@ -52,7 +52,7 @@ def train_window_starts(session: Session, cfg: dict[str, Any]) -> torch.Tensor:
 
 def gather_windows(x: torch.Tensor, starts: torch.Tensor, L: int) -> torch.Tensor:
     """x: [n, D], starts: [W] → [W, L, D] (kopya)."""
-    idx = starts[:, None] + torch.arange(L)[None, :]                         # [W, L]
+    idx = starts[:, None] + torch.arange(L, device=starts.device)[None, :]   # [W, L]
     return x[idx]
 
 

@@ -593,10 +593,10 @@ Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt 
 İlgili fazda kapatılacak açık noktalar:
 1. **Bölme protokolü** (V0): spesifikasyon 65/10/25 (Zenke Lab RSNN ile aynı), v1 ve NeuroBench resmî yükleyicisi 80/10/10. → **Kapandı (KR-035): 80/10/10; literatürle kıyas yaklaşık, ayrıntı KR-035'te.**
 2. **Kod yerleşimi** (V0): öneri `src/v2/` altında ayrı modüller; v1 sınıfları ve testleri korunur. → **Kapandı (KR-035): `src/v2/`, `tests/v2/`, `configs/v2_*.yaml`.**
-3. **Sıfırlama gecikmesi** (V2): referans `plif` kodunda yumuşak sıfırlama s(t−1) ile uygulanıyor (bir adım gecikmeli). Bilinçli mi, düzeltilecek mi?
+3. **Sıfırlama gecikmesi** (V2): referans `plif` kodunda yumuşak sıfırlama s(t−1) ile uygulanıyor (bir adım gecikmeli). Bilinçli mi, düzeltilecek mi? → **Kapandı (KR-038): snnTorch `Leaky` ile aynı standart biçim, değiştirilmedi.**
 4. **Beyincik girdisi döngüsü** (V5): r̄ kapılanmış izlerin ortalaması; g a(t)'ye, a(t) beyincik hatasına bağlı. Beyinciğe kapılanmamış iz mi verilmeli?
 5. **Bias güncellemesi** (V4): referans çevrimiçi NLMS yalnızca W'yi günceller, b^(k) donuk kalır.
-6. **Hesap bütçesi** (V2'ye ertelendi, KR-036): 100 + 150 epoch × N = 1000 × T = 500 adımlık döngü RTX 4060'ta ölçülmeli; gerekirse epoch sayısı azaltılır ya da Δt = 8 ms kullanılır.
+6. **Hesap bütçesi** (V2'ye ertelendi, KR-036): 100 + 150 epoch × N = 1000 × T = 500 adımlık döngü RTX 4060'ta ölçülmeli; gerekirse epoch sayısı azaltılır ya da Δt = 8 ms kullanılır. → **Kapandı (KR-038): CUDA Graph ile 4 ms'de seed başına tam protokol plif ~0,6–0,8 saat; Δt ve epoch sayıları değişmedi.**
 7. **Ön-eğitim kapsamı** (V0/V3): Indy (96 kanal) ve Loco (192 kanal) ayrı primatlardır; ön-eğitim primat başına yapılır. → Günler arası sıra KR-035'te (tarih sırası, ilk oturum Day-0).
 
 ### 12.11 Varsayılan hiperparametreler (v2, başlangıç)

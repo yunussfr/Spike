@@ -35,10 +35,54 @@ windows:                     # çevrimdışı eğitim pencereleri (§12.8); yaln
   length_ms: 2000.0          # 4 ms'de 500 adım
   stride_ms: 1000.0          # yarı örtüşmeli; 4 ms'de 250 adım
 
-bench:                       # Faz V0 hesap bütçesi ölçümü (experiments/v2_bench.py); prototip adım, src/v2 omurgası değil
-  N: 1000
+encoder:                     # SpikeEncoderV2 (§12.3)
+  anscombe_c: 0.375          # √(x + 3/8)
+  clip: 3.0                  # yumuşak kırpma: clip · tanh(z / clip)
+  smooth_tau_ms: 48.0        # beyincik hedefi x̄'in zaman sabiti
+  eps: 1.0e-5                # z-skoru paydası
+  std_min: 1.0e-4            # hiç değişmeyen kanalın σ alt sınırı
+
+backbone:                    # TemporalBackbone (§12.4)
+  mode: plif                 # plif | spiking_gru | tau_gru
+  N: 1000                    # ilk yarı hızlı, ikinci yarı yavaş alt-popülasyon
+  tau_mem_fast_ms: [4.0, 40.0]
+  tau_mem_slow_ms: [40.0, 400.0]
+  tau_syn_ms: [4.0, 100.0]
+  tau_init_u: [0.05, 0.95]   # τ logit başlangıcı: u ~ U(0,1) bu aralığa kırpılır (log-tekdüze değil, aralıkta tekdüze)
+  dropout: 0.3               # eğitimde girdi ve s(t−1) üzerinde
+  surrogate_scale: 10.0      # hızlı-sigmoid surrogate: 1 / (1 + k|V−ϑ|)²
+  theta_init: 1.0            # ϑ başlangıcı (plif)
+  theta_init_spiking_gru: 0.5   # spiking_gru'da V = GRU durumu ∈ (−1, 1); ϑ = 1 ile hiç ateşlemiyor (KR-038)
+  w_rec_gain: 0.9            # W_rec / U_* ortogonal başlatma kazancı
+  chrono_min: 0.1            # chrono bias: −log(max(τ/Δt − 1, chrono_min))
+  homeostasis:               # KV7
+    target_rate: 0.05        # ρ
+    f_min: 0.02
+    f_max: 0.08
+    loss_weight: 10.0        # λ_homeo
+    lr: 1.0e-3               # çevrimiçi ϑ adımı (KV1, Aşama 3)
+    rate_decay: 0.995        # çevrimiçi oran EMA'sı
+    theta_min: 0.3
+    theta_max: 2.5
+
+readout:                     # sızıntılı entegratör başlıkları (§12.7); V2'de tek başlık, V3'te 5
+  taus_ms: [64.0]
+
+train:                       # çevrimdışı eğitim (§12.8)
   batch: 32
-  modes: [plif, gru_loop]    # plif: LIF + surrogate; gru_loop: adım adım GRU hücresi (spiking_gru / tau_gru maliyeti)
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  epochs: 150
+  patience: 20               # val R² bu kadar epoch iyileşmezse durur (en iyi durum geri yüklenir)
+  grad_clip: 1.0             # spesifikasyonda yok; 500 adımlık BPTT için eklendi (KR-038)
+  target_norm: true          # hız train ortalaması/std'siyle standartlaştırılır; R² ham ölçekte
+  cuda_graph: true           # CUDA'da eğitim adımı CUDA Graph ile yakalanır (~25× hız, KR-038); son eksik batch atlanır
+  graph_warmup: 3            # yakalamadan önceki normal (eager) eğitim adımı sayısı
+  eval_streams: 16           # val/test dilimi bu kadar paralel ardışık akışa bölünür
+  eval_burnin_ms: 10000.0    # her akış, skorlanan parçasından bu kadar önce başlar (τ_max = 400 ms'nin 25 katı)
+
+bench:                       # hesap bütçesi ölçümü (experiments/v2_bench.py, KR-036): gerçek src/v2 omurgası
+  modes: [plif, spiking_gru, tau_gru]
   dt_ms: [4.0, 8.0]          # pencere süresi sabit, adım sayısı Δt'ye göre
   warmup: 2                  # ölçülmeyen ilk batch'ler
   iters: 5                   # ölçülen batch sayısı
