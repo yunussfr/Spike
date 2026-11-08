@@ -137,17 +137,22 @@ Kurallar:
 
 ---
 
-## Faz V5 — Beyincik v2 ve duygu uzayı v2 (sürpriz + alt-popülasyon kapılama)
+## Faz V5 — Beyincik v2, duygu uzayı v2 ve duygu-kapılı W_in plastisitesi (KR-044)
 
-**Hedef:** Tam önerilen sistem **D** ve kontrolü **C (karıştırılmış η)**.
+**Hedef:** Tam önerilen sistem **D** ve kontrolleri **C (karıştırılmış η, η_in)**, **W (duygusuz W_in kuralı)**, **L (etiketsiz)**.
 
 **Yapılacaklar:**
 - `CerebellumV2`: φ = [r̄, v̂(t−1)] (efference copy), hedef x̄(t+1), yerel NLMS.
 - `AffectSpaceV2`: E_fast / E_slow, a(t) = tanh((E_fast − E_slow)/E_slow), valence, dominance; g_fast, g_slow, η(t). τ çevrimiçi değişmez (KV4).
 - D'nin η(t) dizisi kaydedilir; C bu diziyi zamanda karıştırarak uygular; B, D'nin η̄'sını kullanır (eşlenmiş η).
+- **Önce etiketsiz kontroller (L):** Day-0 hedefli homeostaz, akan kanal z-skoru; ayar seed'leri, val, günler arası. Sonuç kullanıcıya.
+- `TemporalBackbone.step(x, w_in=...)` koşul başına W_in; W_in üç faktörlü kuralı (§12.13), η_in(t) = η_in,0·max(0, a). W_cer Day-0 train'de ridge ile başlatılır.
+- **Karar kapısı:** W val'de B'yi geçmiyorsa duygu kapısı anlamsız → kullanıcıya dönülür.
 
 **Testler:**
-- K3/KV3: e yalnızca W_cer'i, e_v yalnızca okuma başlıklarını günceller; duygu uzayı ikisini yalnızca okur.
+- K3/KV3: e_cer yalnızca W_cer'i, e_v yalnızca okuma başlıklarını ve W_in'i günceller; duygu uzayı ikisini yalnızca okur.
+- KV1: W_rec, τ, bias hiç değişmiyor; ‖W_in − W_in,0‖ ≤ δ_max·‖W_in,0‖; akış sonrası W_in geri yükleniyor; a ≤ 0 iken W_in yalnız çapaya doğru gidiyor.
+- η_in = 0 ve duygu kapalı → V4 akışıyla aynı çıktı. `step(x, w_in=weight)` = `step(x)`.
 - Beyincik x̄(t+1)'i tahmin anında görmüyor (KV6).
 - Regülatör çıktıları sınırlar içinde (KV4); `regulators.enabled: false` → g = 1, η sabit (KV5).
 - Karıştırılmış dizinin ortalaması ve dağılımı D'ninkiyle aynı.
@@ -155,6 +160,7 @@ Kurallar:
 **Çıkış kriteri:**
 - Ayar seed'lerinde D, B (eşlenmiş η̄) ve C val sonuçları; a(t), g, η izleri grafikte.
 - Kapılama ile η modülasyonunun katkısı ayrı ayrı ölçülmüş (D − kapılamasız D).
+- L, W, D val sonuçları; ‖W_in − W_in,0‖, a(t), η_in(t) izleri.
 
 ---
 
@@ -184,5 +190,5 @@ Kurallar:
 | V2 | Eğitilebilir omurga, mod seçimi | — |
 | V3 | Ön-eğitim + Day-0 + 5 başlıklı okuma | A |
 | V4 | Çapalı NLMS akışı | B |
-| V5 | Beyincik v2 + duygu v2 | C, D |
+| V5 | Beyincik v2 + duygu v2 + duygu-kapılı W_in | C, D, W, L |
 | V6 | Kayma ve elektrot kaybı deneyi | A–E |

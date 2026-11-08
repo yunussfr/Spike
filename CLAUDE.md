@@ -20,7 +20,7 @@ Depoda iki mimari hattı var (ARCHITECTURE.md başındaki "Sürümler" notu):
 
 ## Mevcut durum
 
-- **Aktif hat: Spike v2. Aktif faz: V3 — çoklu oturum ön-eğitimi + Day-0 + 5 başlıklı okuma (V0–V2 tamamlandı 2026-11-05).** Protokol KR-035 (80/10/10, Δt 4 ms). V2: eğitilen plif tek oturumda val R² Indy 0,769 / Loco 0,658; 4 ms GRU tavanı 0,714 / 0,571 (KR-039). Ana mod plif (karar); Loco'da KV7 ihlali (yavaş alt-popülasyon 0,014) düzeltilmeden raporlanıyor. Eğitim adımı CUDA Graph ile (`train.cuda_graph`, KR-038). (Faz bitince bu satırı güncelle.)
+- **Aktif hat: Spike v2. Aktif faz: V5 — beyincik + duygu uzayı + duygu-kapılı W_in plastisitesi (V0–V4 tamamlandı 2026-11-08, KR-044).** V3: ön-eğitimli donuk plif test R² Indy 0,754 / Loco 0,704; Day-0 modeli sonraki günlerde ≈ 0, okuma NLMS'i (V4) kurtarmıyor (KR-042). Sıra: etiketsiz kontroller (v2-L) → W_in kuralı (v2-W) → tam sistem (v2-D, v2-C); her adımda kullanıcıya sonuç. Ana mod plif; Loco KV7 ihlali raporlanıyor. Eğitim adımı CUDA Graph ile (KR-038); uzun koşular seed / aşama başına ayrı süreçte, GPU'da tek süreç (KR-043). (Faz bitince bu satırı güncelle.)
 - v1 son durumu: Faz 3–4 test R² Indy 0,442 / Loco 0,365. Faz 6a: kapılı η eşlenmiş η'yı geçmedi (KR-031, KR-032). KR-033: GRU tavanı Indy 0,736 / Loco 0,685 → kayıp doğrusal okunan temsilde; v2'ye geçişin gerekçesi bu. v1 Faz 6 kayma deneyi askıda.
 - Açık v2 kararları (ARCHITECTURE.md §12.10): beyincik girdisinin kapılanıp kapılanmaması (V5). Kapananlar: bölme 80/10/10 ve `src/v2/` yerleşimi (KR-035), sıfırlama gecikmesi ve epoch bütçesi (KR-038), bias donuk (KR-040).
 - **Çevrimiçi etiket 500 ms gecikmeli (KR-041):** anında etiket 4 ms'de dejenere (y_{t−1} kopyası R² 0,999). Uyum tablolarında gecikmeli kopyalama tabanı verilir. V3 ve V4 birlikte koşuyor (`runs/chain_<primat>.sh`: ayar → V4 val → V3 rapor).
@@ -31,11 +31,11 @@ Depoda iki mimari hattı var (ARCHITECTURE.md başındaki "Sürümler" notu):
 
 ## Kesin kurallar — v2 kodu (ARCHITECTURE.md §12.2)
 
-1. **KV1:** Omurga (ağırlıklar, τ_mem, τ_syn) yalnızca çevrimdışı aşamalarda gradyanla eğitilir. Çevrimiçi akışta `requires_grad=False`, hiçbir güncelleme dokunmaz, τ değişmez. Çevrimiçi değişebilen tek omurga durumu homeostatik eşik ϑ (etiketsiz, yerel, sınırlı).
-2. **KV2:** Çevrimiçi öğrenme yereldir: gradyan / optimizer yok; yalnızca beyincik NLMS'i, çapalı okuma NLMS'i ve homeostaz.
-3. **KV3:** e_v (hız hatası) çevrimiçi yalnızca okuma başlıklarını, e_cer (tahmin hatası) yalnızca W_cer'i eğitir. Beyincik kaybı omurgaya gradyan vermez. Duygu uzayı yalnızca okur.
-4. **KV4:** Regülatörler yalnızca g_fast, g_slow ∈ [1−α_gate, 1+α_gate] ve η(t) ∈ [η_0, η_0(1+α_η)] üretir. τ ve omurgaya dokunmaz.
-5. **KV5:** `regulators.enabled: false` her zaman çalışmalı (g = 1, η sabit).
+1. **KV1:** Omurga (ağırlıklar, τ_mem, τ_syn) yalnızca çevrimdışı aşamalarda gradyanla eğitilir. Çevrimiçi akışta `requires_grad=False`; W_rec, τ, bias değişmez. Çevrimiçi değişebilenler: homeostatik eşik ϑ ve (plif, `plasticity.enabled`) W_in — yalnız §12.13'teki duygu-kapılı, çapalı, norm topu sınırlı yerel kuralla; akış sonunda W_in,0 geri yüklenir (KR-044).
+2. **KV2:** Çevrimiçi öğrenme yereldir: gradyan / optimizer yok; yalnızca beyincik NLMS'i, çapalı okuma NLMS'i, homeostaz ve W_in üç faktörlü kuralı.
+3. **KV3:** e_v (hız hatası) çevrimiçi okuma başlıklarını ve W_in'i (okuma ağırlıklarıyla geri besleme), e_cer (tahmin hatası) yalnızca W_cer'i eğitir. Beyincik kaybı omurgaya gradyan vermez. Duygu uzayı yalnızca okur.
+4. **KV4:** Regülatörler yalnızca g_fast, g_slow ∈ [1−α_gate, 1+α_gate], η(t) ∈ [η_0, η_0(1+α_η)] ve η_in(t) ∈ [0, η_in,0] üretir. τ ve W_rec'e dokunmaz.
+5. **KV5:** `regulators.enabled: false` her zaman çalışmalı (g = 1, η ve η_in sabit).
 6. **KV6:** Akışta durum sıfırlanmaz; beyincik x(t+1)/x̄(t+1)'i göremez; prequential (önce skorla, sonra güncelle); kodlayıcı istatistikleri yalnızca train'den.
 7. **KV7:** k-WTA yok; hedef oran ρ = 0,05, homeostatik bant [0,02; 0,08]. Oran alt-popülasyon başına loglanır, bant dışı hata. `tau_gru` muaf.
 8. **KV8:** Kodda sabit hiperparametre yok (spesifikasyon kodundaki sabitler dahil) — her şey YAML'dan. Config + seed + git hash + metrik + checkpoint hash'leri kaydedilir. Sonuçlar ≥5 seed, ortalama ± std.

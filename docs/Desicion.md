@@ -708,6 +708,24 @@ Her kayıt:
 - **Ayıklama:** aynı aşama tek başına (tam takvim dahil), değerlendirme grafı kapalıyken, `--report-test` ile ve önceki modeller skorlandıktan sonra (14 epoch) çökmedi. Graf ve havuz belleğini açıkça bırakmak (`TrainStep.release`, `release_graph_memory`, değerlendirme grafının `del`'i) çöküşü önlemedi; kod yine de içeride. İki sürecin GPU'yu paylaşması olasılığı artırıyor gibi, ama tek süreçte de iki kez görüldü. Kök neden bulunamadı (sürücü / PyTorch tarafı olası).
 - **Karar:** uzun koşular seed ve aşama başına ayrı süreçte (`runs/report_split_*.sh`: önce pretrain + finetune, sonra day0), çöken süreç en son klasörden `--resume` ile yeniden denenir. `--resume` birden çok klasör alır; ön-eğitim, ince ayar ve day0 checkpoint'leri yeniden eğitilmeden yüklenip skorlanır (hash'leriyle yeni klasöre kopyalanır). Sonuçlar `experiments/v2_collect.py` ile birleştirilir ((primat, seed, aşama, oturum) başına en son satır). GPU'da aynı anda tek eğitim süreci.
 
+### KR-044 — V5 genişletildi: duygu-kapılı W_in plastisitesi, W_rec donuk; etiketsiz kontroller önce (kullanıcı önerisi)
+- **Bağlam:** KR-042: Day-0 modeli sonraki günlerde R² ≈ 0, okuma NLMS'i en çok +0,2 kazandırıyor. Kayma girişte (elektrot / kanal ölçeği) ve donuk W_in üzerinden temsili bozuyor. Sabit hedefli homeostaz Indy 0131'de 0,11 → 0,49: kaymanın bir kısmı ölçek.
+- **Öneri (kullanıcı, 2026-11-08):** W_rec ve τ donuk kalsın (hareket dinamiği günler arası kararlı varsayılır). W_in çevrimiçi değişebilsin, ama yalnızca sürpriz yükseldiğinde ve öğrenilene sadık kalarak. Beyincik beklenen ile gelen arasındaki tuhaflığı duygu uzayına aktarsın; duygu uzayı W_in'in ve okumanın ne kadar değişeceğini belirlesin.
+- **Karar (onaylı plan, teşhis tablosuyla):**
+
+  | Kural | Önce | Sonra |
+  |---|---|---|
+  | KV1 | Omurga çevrimiçi tamamen donuk (yalnız ϑ) | W_rec, τ donuk; W_in (plif) çapalı, norm topu sınırlı yerel kuralla değişebilir |
+  | KV2 | Beyincik NLMS, okuma NLMS, homeostaz | + W_in üç faktörlü kural (ön-sinaptik iz × surrogate ψ × yayınlanan gecikmeli hata) |
+  | KV3 | e_v yalnız okumayı eğitir | e_v okumayı ve W_in'i (geri besleme = okuma ağırlıkları) eğitir; e_cer yalnız W_cer |
+  | KV4 | g_fast, g_slow, η | + η_in(t) = η_in,0·max(0, a(t)) |
+  | KV6, KV7 | — | Yalnız kontrol: akan kanal z-skoru (v2-L), homeostaz hedefi `day0` |
+
+  Denklemler ARCHITECTURE.md §12.13. Yeni koşullar: v2-W (W_in kuralı, sabit eşlenmiş η_in, duygusuz) ve v2-L (etiketsiz kontrol). Ana iddia: v2-D > v2-B, v2-W, v2-C.
+- **Riskler ve önlemler:** geri besleme döngüsü (W_in → temsil → sürpriz → W_in) → beyincik W_in'den hızlı uyum sağlar, çapa + δ_max norm topu + η_in üst sınırı. 500 ms gecikmeli hatayla öğrenme sinyali zayıf olabilir.
+- **Sıra ve karar kapıları:** (1) etiketsiz kontroller (v2-L) val'de; (2) v2-W val — B'yi geçmiyorsa duygu kapısı anlamsız, kullanıcıya dönülür; (3) beyincik + duygu (v2-D, v2-C) val; (4) rapor seed'leri test, Wilcoxon.
+- **Kullanılmayanlar:** evrimsel eğitim (duygu hiperparametreleri için CMA-ES ileride düşünülebilir); W_rec çevrimiçi plastisitesi (kararlılık ve unutma riski).
+
 ---
 
 ## Altyapı
