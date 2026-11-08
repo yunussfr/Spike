@@ -51,6 +51,7 @@ def main() -> None:
     p.add_argument("--targets", choices=["tune", "all"], default="tune", help="ince ayar / scratch oturumları")
     p.add_argument("--report-test", action="store_true")
     p.add_argument("--epochs", type=int, default=None, help="duman koşusu: tüm aşamalarda epoch sayısı")
+    p.add_argument("--resume", nargs="*", default=[], help="çökmüş koşu klasör(ler)i, ilk bulunan kullanılır: oradaki ön-eğitim / ince ayar / day0 checkpoint'leri yeniden kullanılır (eğitilmez, yeniden skorlanır)")
     p.add_argument("--set", nargs="*", default=[])
     a = p.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -89,6 +90,16 @@ def main() -> None:
             out["test_r2"] = evaluate(model, pr, "test", cfg, r2_neurobench)["r2"]
         return out
 
+    def resumed(name: str, m: V2Model) -> str | None:
+        """--resume klasöründe bu checkpoint varsa modele yükler, yeni klasöre kopyalar (hash'iyle) ve yolunu döner."""
+        old = next((Path(d) / name for d in a.resume if (Path(d) / name).exists()), None)
+        if old is None:
+            return None
+        state = torch.load(old, map_location=device)
+        m.load_state_dict(state)
+        save(state, name)
+        return str(old)
+
     for primate in primates:
         names = list(cfg["primates"][primate])
         day0, dayk = crossday_sessions(cfg, primate)
@@ -106,7 +117,14 @@ def main() -> None:
                                       "epoch": row["epoch"], "val_r2": round(row["val_r2"], 4)}), flush=True)
 
             pre_state = None
-            if "pretrain" in stages:
+            m = V2Model(cfg, C, D).to(device)
+            old = resumed(f"pretrain_{primate}_seed{seed}.pt", m) if "pretrain" in stages else None
+            if old is not None:                                             # çökmüş koşudan devam: ön-eğitim yeniden yapılmaz
+                pre_state = copy.deepcopy(m.state_dict())
+                for n in names:
+                    record(primate=primate, seed=seed, stage="pretrain", session=n, best_epoch=-1, resumed_from=old,
+                           **scores(m, preps[n]))
+            elif "pretrain" in stages:
                 set_seed(seed)
                 m = V2Model(cfg, C, D).to(device)
                 res = train_model(m, [preps[n] for n in names], stage_cfg(cfg, ep_pre), seed, r2_neurobench, None,
@@ -120,6 +138,11 @@ def main() -> None:
                 for n in targets:
                     set_seed(seed)
                     m = V2Model(cfg, C, D).to(device)
+                    prev = resumed(f"finetune_{n}_seed{seed}.pt", m)
+                    if prev is not None:
+                        record(primate=primate, seed=seed, stage="finetune", session=n, best_epoch=-1,
+                               resumed_from=prev, **scores(m, preps[n]))
+                        continue
                     m.load_state_dict(pre_state)
                     res = train_model(m, preps[n], stage_cfg(cfg, ep_ft, cfg["finetune"]["lr"]), seed, r2_neurobench,
                                       None, lambda r, n=n: log_epoch(r, "finetune", n))
@@ -138,15 +161,18 @@ def main() -> None:
             if "day0" in stages:
                 set_seed(seed)
                 m = V2Model(cfg, C, D).to(device)
-                res = train_model(m, preps[day0], stage_cfg(cfg, ep_ft), seed, r2_neurobench, None,
-                                  lambda r: log_epoch(r, "day0", day0))
-                m.readout.save_anchor()
-                save(m.state_dict(), f"day0_{primate}_seed{seed}.pt")
-                record(primate=primate, seed=seed, stage="day0", session=day0, eval_on=day0, best_epoch=res.best_epoch,
+                prev = resumed(f"day0_{primate}_seed{seed}.pt", m)
+                if prev is None:
+                    res = train_model(m, preps[day0], stage_cfg(cfg, ep_ft), seed, r2_neurobench, None,
+                                      lambda r: log_epoch(r, "day0", day0))
+                    m.readout.save_anchor()
+                    save(m.state_dict(), f"day0_{primate}_seed{seed}.pt")
+                best = -1 if prev is not None else res.best_epoch
+                record(primate=primate, seed=seed, stage="day0", session=day0, eval_on=day0, best_epoch=best,
                        **scores(m, preps[day0]))
                 for n in dayk:                                               # donuk Day-0 modeli, Day-0 istatistikleri
                     pk = prepare_session(cfg, sessions[n], device, stats_from=sessions[day0])
-                    record(primate=primate, seed=seed, stage="day0", session=n, eval_on=n, best_epoch=res.best_epoch,
+                    record(primate=primate, seed=seed, stage="day0", session=n, eval_on=n, best_epoch=best,
                            **scores(m, pk))
                     del pk
             torch.cuda.empty_cache() if device.type == "cuda" else None

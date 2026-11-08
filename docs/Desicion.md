@@ -641,6 +641,73 @@ Her kayıt:
 - **Karar (kullanıcı, 2026-11-07):** ana omurga modu **plif**. Sebep: SNN olarak tau_gru ile aynı R², spiking_gru'dan çok iyi, en ucuz mod. tau_gru üst sınır kontrolü olarak kalır, spiking_gru bırakılır.
 - **KV7 (kullanıcı, 2026-11-07):** Loco'daki ihlal (yavaş alt-popülasyon 0,014 < 0,02) düzeltilmeden **raporlanır** (KR-014 gibi). Homeostaz ayarlanmadı; kural değişmedi. Tablolarda alt-popülasyon oranları ve ✗ işareti her fazda gösterilir; V3'te ön-eğitimle oran yeniden ölçülür.
 
+### KR-040 — Faz V3 + V4 uygulama kararları (kullanıcı: V3 ve V4 birlikte, 5 epoch'ta bir değerlendirme, GPU)
+- **Değerlendirme sıklığı:** `train.eval_every: 5` (+ son epoch). `patience` en iyi değerlendirmeden bu yana geçen epoch sayısıdır (20).
+- **Hız:**
+  - 5 başlık ayrı `nn.Linear` yerine tek tensörde (`einsum`). Eğitim adımı 1 başlıkla 0,096 s, 5 başlıkla 0,103 s.
+  - Değerlendirme akışı da CUDA Graph parçalarıyla (`eval_graph_chunk: 500`). Indy'nin 3 oturumunun val'i 35 s'den 2,6 s'ye indi.
+  - Ön-eğitim epoch'u ~13 s (Indy).
+- **Ön-eğitim:** primat başına, 3 oturumun train pencereleri havuzlanır. Her oturum kendi train istatistikleriyle kodlanır. Val R² 3 oturumun ortalamasıdır.
+- **İnce ayar:** ön-eğitim ağırlıklarından başlar, lr ön-eğitimle aynı (1e-3; spesifikasyonda ayrı değer yok), 150 epoch, val'de en iyi epoch, ardından W_0 çapası.
+- **Günler arası model (Day-0):** ön-eğitim Day-k oturumlarının train dilimlerini de gördüğü için günler arası senaryoda kullanılamaz (Day-k dağılımı sızar). Bu yüzden ayrı bir model yalnızca Day-0 oturumunda sıfırdan eğitilir. Day-k oturumları Day-0'ın kodlayıcı ve hedef istatistikleriyle kodlanır; Day-k'ye uyum yalnızca çevrimiçi.
+- **Çevrimiçi okuma (V4):** omurga ve sızıntılı izler koşullar arasında ortaktır; η ızgarası tek akışta birlikte koşar. Bias b^(k) donuk kalır (§12.10 nokta 5 kapandı: spesifikasyondaki gibi). α_anchor = 1e-4.
+- **Ayar / rapor ayrımı:** η yalnızca ayar seed'lerinin (100–102) val'inde seçilir. Ayar koşusunda ince ayar ve scratch yalnızca primat başına en kısa oturumda yapılır. Rapor koşusu (seed 0–4, test) pretrain + 3 oturumda finetune + day0 aşamalarını içerir.
+
+### KR-041 — Çevrimiçi uyumda etiket 500 ms gecikmeli gelir (anında etiket dejenere)
+- **Bağlam:** V4 duman koşusunda anında etiketle (prequential, d = 0) R² η ile sınırsız arttı (oturum içi 0,59 → 0,84). 4 ms'de hız çok yavaş değişiyor: v̂_t = y_{t−1} (son etiketi tekrarla) val'de R² 0,999 veriyor. Büyük η'da NLMS okuması bu kopyaya yaklaşıyor; kazanç kayma takibinden değil, etiket sızıntısına yakın bir etkiden geliyor.
+
+  | gecikme d | 4 ms | 20 ms | 100 ms | 200 ms | 500 ms | 1000 ms |
+  |---|---|---|---|---|---|---|
+  | y_{t−d} kopyası R², loco_20170215_02 val | 0,999 | 0,970 | 0,484 | −0,152 | −0,924 | −1,193 |
+  | y_{t−d} kopyası R², indy_20170131_02 val | 0,999 | 0,965 | 0,348 | −0,464 | −1,016 | −1,481 |
+- **Karar (kullanıcı, 2026-11-07):** etiket y_t, t + 500 ms'de gelir (`online.label_delay_ms: 500`, d = 125 adım). Güncelleme e = y_{t−d} − v̂_{t−d} ve r_{t−d} ile yapılır (gecikmeli NLMS, halka tampon). Tablolarda gecikmeli kopyalama tabanı (v̂_t = y_{t−d}) her oturum için verilir.
+- **Testler:** y_t değişince v̂_{t+d}'ye kadar hiçbir tahmin değişmiyor, ilk değişen v̂_{t+d+1} (d = 0, 1, 7). Burn-in etiketleri hiç kullanılmıyor. CUDA Graph yolu adım adım yolla aynı (d = 0, 16).
+- **Duman koşusunun sonucu** (1 epoch'luk Loco modeli, seed 100, val):
+  - Oturum içi: η = 0: 0,590; en iyi η = 3e-3: 0,598.
+  - Günler arası: η = 0 ortalaması 0,210; uyumla anlamlı kazanç yok.
+  - η = 3e-2'de ıraksıyor (gecikmeli LMS kararlılık sınırı).
+- **v1 için not:** Faz 6a'daki (KR-031, KR-032) prequential uyum d = 1 ortam adımıyla (20 ms) çalıştı. 20 ms kopyası R² ≈ 0,97 olduğundan, oradaki "η arttıkça R² artıyor" bulgusunun bir kısmı büyük olasılıkla bu etkidir. v1 sonuçları bu notla okunmalı.
+
+### KR-042 — Faz V3 + V4 sonuçları: oturum içi hedef tuttu, günler arası model çöküyor, okuma NLMS'i kurtarmıyor
+- **Koşular:** V3 rapor `runs/v3_report_{indy,loco}_table.md` (seed 0–4, test; seed/aşama başına ayrı süreç klasörleri, `experiments/v2_collect.py` ile birleştirildi, KR-043). V3 ayar `runs/20261107-165844_v2_pretrain_indy_seeds100-101-102`, `runs/20261107-161250_v2_pretrain_loco_seeds100-101-102`. V4 val `runs/v4_val_{indy,loco}.log`, V4 test `runs/20261108-045545_v2_online_test_seeds0-1-2-3-4` (Loco), `runs/20261108-050007_v2_online_test_seeds0-1-2-3-4` (Indy).
+- **V3, test R² (5 seed, ortalama ± std):**
+
+  | Oturum | Ön-eğitim | Ön-eğitim + ince ayar | Day-0 modeli (donuk, v2-A günler arası) | oran hızlı / yavaş (ön-eğitim, val) |
+  |---|---|---|---|---|
+  | indy_20160622_01 (Day-0) | 0,794 ± 0,005 | 0,793 ± 0,012 | 0,799 ± 0,009 | 0,029 / 0,028 |
+  | indy_20160630_01 | 0,652 ± 0,015 | 0,648 ± 0,013 | −0,017 ± 0,008 | 0,026 / 0,018 ✗ |
+  | indy_20170131_02 | 0,816 ± 0,008 | 0,813 ± 0,010 | 0,108 ± 0,039 | 0,026 / 0,019 ✗ |
+  | loco_20170210_03 (Day-0) | 0,742 ± 0,007 | 0,742 ± 0,013 | 0,733 ± 0,012 | 0,013 / 0,017 ✗ |
+  | loco_20170215_02 | 0,669 ± 0,010 | 0,665 ± 0,011 | 0,010 ± 0,036 | 0,015 / 0,018 ✗ |
+  | loco_20170301_05 | 0,702 ± 0,015 | 0,698 ± 0,008 | −0,366 ± 0,281 | 0,010 / 0,023 ✗ |
+- **V3 çıkış kriteri:** oturum içi test R² ≥ 0,65 her oturumda (ön-eğitim; ortalama Indy 0,754, Loco 0,704). Tek sınır altı: Indy 0630 ince ayar 0,648.
+- **Ayar seed'leri (val, en kısa oturum):**
+
+  | | ön-eğitim | ince ayar | sıfırdan (5 başlık) | V2 tek başlık (KR-039) |
+  |---|---|---|---|---|
+  | indy_20170131_02 | 0,763 | 0,778 | 0,763 | 0,769 |
+  | loco_20170215_02 | 0,648 | 0,628 | 0,659 | 0,658 |
+
+  1 / 5 başlık farkı ve ön-eğitimin katkısı ±0,02 içinde. İnce ayar (lr 1e-3) Loco'da zarar, Indy'de küçük kazanç; testte ön-eğitimle aynı.
+- **V4, test R² (5 seed), η val'den seçildi (ayar seed'leri):**
+
+  | | η = 0 (v2-A) | seçilen η, homeostaz kapalı (v2-B) | η = 3e-3, homeostaz açık | 500 ms kopya tabanı |
+  |---|---|---|---|---|
+  | Indy oturum içi (3 oturum ort., η 3e-4) | 0,752 | 0,753 | 0,622 | −0,88 … −1,02 |
+  | Loco oturum içi (η 3e-3) | 0,701 | 0,707 | 0,610 | −0,85 … −1,03 |
+  | Indy Day-k 0630 / 0131 (η 3e-4) | −0,017 / 0,108 | −0,021 / 0,128 | −0,027 / **0,485** | |
+  | Loco Day-k 0215 / 0301 (η 1e-3) | 0,010 / −0,358 | 0,030 / −0,162 | 0,005 / −0,201 | |
+- **Okuma:**
+  1. Okuma NLMS'i oturum içinde +0,001–0,006, günler arası en çok +0,2 kazandırıyor; Day-k'de R² 0 civarında kalıyor. Kayma girişte (elektrot / kanal ölçeği) ve donuk W_in üzerinden temsili bozuyor; çıktı katmanı bunu telafi edemiyor.
+  2. Çevrimiçi homeostaz (ρ = 0,05 sabit hedef) oturum içinde zarar veriyor (Indy Day-0 0,80 → 0,63): eğitilmiş modelin doğal oranı (Loco hızlı yarı ~0,01) sabit hedeften uzak. Ama Indy 0131'de günler arası R²'yi 0,11 → 0,49'a çıkarıyor: kaymanın bir kısmı ölçek kayması.
+  3. η = 3e-2 ıraksıyor; güvenli aralık 3e-4–3e-3.
+- **Sonraki adım (kullanıcı, 2026-11-08):** duygu-kapılı W_in plastisitesi + beyincik + duygu uzayı, önce etiketsiz kontroller (KR-044).
+
+### KR-043 — Uzun süreçte CUDA Graph replay çöküşü: seed / aşama başına ayrı süreç ve `--resume`
+- **Belirti:** V3 rapor koşusunda tekrarlanan `Windows fatal exception: access violation` (exit 139) ve bir kez `CUDA error: unspecified launch failure`; çöküş eğitim grafının `replay()` çağrısında. Aynı noktada (Loco seed 1 day0, epoch 10) 6 kez yeniden üretildi.
+- **Ayıklama:** aynı aşama tek başına (tam takvim dahil), değerlendirme grafı kapalıyken, `--report-test` ile ve önceki modeller skorlandıktan sonra (14 epoch) çökmedi. Graf ve havuz belleğini açıkça bırakmak (`TrainStep.release`, `release_graph_memory`, değerlendirme grafının `del`'i) çöküşü önlemedi; kod yine de içeride. İki sürecin GPU'yu paylaşması olasılığı artırıyor gibi, ama tek süreçte de iki kez görüldü. Kök neden bulunamadı (sürücü / PyTorch tarafı olası).
+- **Karar:** uzun koşular seed ve aşama başına ayrı süreçte (`runs/report_split_*.sh`: önce pretrain + finetune, sonra day0), çöken süreç en son klasörden `--resume` ile yeniden denenir. `--resume` birden çok klasör alır; ön-eğitim, ince ayar ve day0 checkpoint'leri yeniden eğitilmeden yüklenip skorlanır (hash'leriyle yeni klasöre kopyalanır). Sonuçlar `experiments/v2_collect.py` ile birleştirilir ((primat, seed, aşama, oturum) başına en son satır). GPU'da aynı anda tek eğitim süreci.
+
 ---
 
 ## Altyapı

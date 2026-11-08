@@ -422,6 +422,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-07 | §12.8 Aşama 3: çevrimiçi etiket 500 ms gecikmeli; günler arası model yalnızca Day-0'da eğitilir | KR-041: anında etiketle y_{t−1} kopyası R² 0,999 (uyum kazancı sızıntıya yakın). KR-040: ön-eğitim Day-k train dağılımını görüyordu |
 | 2026-11-03 | Spike v2 hattı eklendi (§12): çevrimdışı eğitilen hızlı/yavaş omurga, Anscombe kodlayıcı, yumuşatılmış hedefli beyincik, sürpriz modülasyonlu η + alt-popülasyon kapılama, 5 başlıklı çapalı okuma; v2 kuralları KV1–KV8. v1 kuralları v1 koduna uygulanmaya devam eder | Kullanıcı spesifikasyonu (`docs/spike_v2_mimari_spesifikasyon.md`, KR-034). KR-033: kayıp doğrusal okunan temsilde (GRU tavanı +0,3 R²); sabit rezervuar bu farkı kapatamıyor |
 | 2026-11-03 | K2 (global geri yayılım yok) kaldırıldı; numara boş bırakıldı | Kullanıcı kararı (KR-033). Tavan ölçümü için BPTT ile eğitilen GRU referansı gerekiyor; okuma blokları yerel kalır |
 | 2026-11-02 | Faz 6: değerlendirmede hızlı-yavaş okuma W_base + ΔW (elastik çapa, NLMS, norm sınırı), η_t nöromodülatör kapısı (§3.6), prequential protokol (§8), opsiyonel çapa alt-popülasyonu (§3.2) | Kullanıcı spesifikasyonu (KR-031). Faz 5'te donuk okuma ile C ≈ B+Z; hipotez: τ'nun yarattığı temsil kayması okuma uyumu gerektiriyor |
@@ -567,6 +568,8 @@ W^(k) ← (1 − α_anchor)·W^(k) + α_anchor·W_0^(k) + η(t)·e_v(t)·r̃^(k)
    `L = √(mean_t ‖v(t) − v̂(t)‖² + 1e-6) + λ_homeo·L_homeo`, λ_homeo = 10.
 2. **Aşama 2 — Day-0 ince ayarı:** hedef oturumun (günler arası protokolde Day-0 kaynak oturumunun) train diliminde 150 epoch. Val R²'si en yüksek epoch seçilir, ardından `save_anchor_weights()` → W_0.
 3. **Aşama 3 — Akış:** test dilimi (oturum içi ya da Day-k) pencerelenmeden adım adım akar (`eval`, gradyan kapalı, `online_homeostasis` config'ten). Geçerli kurallar: KV1, KV2, KV6.
+   - **Etiket gecikmesi (KR-041):** y_t okumaya t + d'de ulaşır (`online.label_delay_ms`, varsayılan 500 ms). Güncelleme e = y_{t−d} − v̂_{t−d} ve r_{t−d} ile yapılır. Sebep: 4 ms'de anında etiketle y_{t−1} kopyası bile R² ≈ 0,999 verir, uyum kazancı anlamsızlaşır. Tablolarda gecikmeli kopyalama tabanı (v̂_t = y_{t−d}) raporlanır.
+   - **Günler arası model (KR-040):** yalnızca Day-0'da eğitilir (ön-eğitim Day-k train dilimlerini gördüğü için kullanılmaz); Day-k, Day-0 istatistikleriyle kodlanır.
 
 ### 12.9 Değerlendirme koşulları (v2)
 v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
@@ -595,7 +598,7 @@ Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt 
 2. **Kod yerleşimi** (V0): öneri `src/v2/` altında ayrı modüller; v1 sınıfları ve testleri korunur. → **Kapandı (KR-035): `src/v2/`, `tests/v2/`, `configs/v2_*.yaml`.**
 3. **Sıfırlama gecikmesi** (V2): referans `plif` kodunda yumuşak sıfırlama s(t−1) ile uygulanıyor (bir adım gecikmeli). Bilinçli mi, düzeltilecek mi? → **Kapandı (KR-038): snnTorch `Leaky` ile aynı standart biçim, değiştirilmedi.**
 4. **Beyincik girdisi döngüsü** (V5): r̄ kapılanmış izlerin ortalaması; g a(t)'ye, a(t) beyincik hatasına bağlı. Beyinciğe kapılanmamış iz mi verilmeli?
-5. **Bias güncellemesi** (V4): referans çevrimiçi NLMS yalnızca W'yi günceller, b^(k) donuk kalır.
+5. **Bias güncellemesi** (V4): referans çevrimiçi NLMS yalnızca W'yi günceller, b^(k) donuk kalır. → **Kapandı (KR-040): spesifikasyondaki gibi donuk.**
 6. **Hesap bütçesi** (V2'ye ertelendi, KR-036): 100 + 150 epoch × N = 1000 × T = 500 adımlık döngü RTX 4060'ta ölçülmeli; gerekirse epoch sayısı azaltılır ya da Δt = 8 ms kullanılır. → **Kapandı (KR-038): CUDA Graph ile 4 ms'de seed başına tam protokol plif ~0,6–0,8 saat; Δt ve epoch sayıları değişmedi.**
 7. **Ön-eğitim kapsamı** (V0/V3): Indy (96 kanal) ve Loco (192 kanal) ayrı primatlardır; ön-eğitim primat başına yapılır. → Günler arası sıra KR-035'te (tarih sırası, ilk oturum Day-0).
 

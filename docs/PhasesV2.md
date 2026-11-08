@@ -92,7 +92,9 @@ Kurallar:
 
 ---
 
-## Faz V3 — Çoklu oturum ön-eğitimi, Day-0 ince ayarı, 5 başlıklı LI okuma
+## Faz V3 — Çoklu oturum ön-eğitimi, Day-0 ince ayarı, 5 başlıklı LI okuma  ✅ Tamamlandı (2026-11-08)
+
+> Sonuç (KR-042): ön-eğitimli donuk model (A) test R², 5 seed: Indy 0,794 / 0,652 / 0,816, Loco 0,742 / 0,669 / 0,702 (ortalama 0,754 / 0,704; kriter ≥ 0,65 sağlandı). İnce ayar testte ön-eğitimle aynı. Ayar seed'lerinde 1 / 5 başlık ve ön-eğitimli / sıfırdan farkı ±0,02 içinde. Day-0 modeli kendi gününde 0,80 / 0,73, sonraki günlerde ≈ 0 (Indy −0,02 / 0,11, Loco 0,01 / −0,37). KV7: Loco hızlı alt-popülasyon ~0,01–0,015 ✗, raporlanıyor. Uzun süreçte CUDA Graph çöküşü → seed / aşama başına süreç (KR-043). Tablolar: `runs/v3_report_{indy,loco}_table.md`.
 
 **Hedef:** Tam çevrimdışı boru hattı (Aşama 1–2) ve donuk modelle oturum içi hedefe ulaşmak.
 
@@ -113,7 +115,9 @@ Kurallar:
 
 ---
 
-## Faz V4 — Akışlı çevrimiçi uyum: çapalı NLMS ve çevrimiçi homeostaz
+## Faz V4 — Akışlı çevrimiçi uyum: çapalı NLMS ve çevrimiçi homeostaz  ✅ Tamamlandı (2026-11-08)
+
+> Sonuç (KR-041, KR-042): etiket 500 ms gecikmeli. B − A (test, η val'den): oturum içi Indy +0,001, Loco +0,006; günler arası Day-k'de en çok +0,2, R² 0 civarında kalıyor. Sabit hedefli (ρ = 0,05) çevrimiçi homeostaz oturum içinde zararlı (Indy 0,80 → 0,63), Indy 0131 günler arasında yararlı (0,11 → 0,49). 500 ms kopya tabanı −0,85 … −1,03. Koşular: `runs/20261108-045545_v2_online_test_seeds0-1-2-3-4`, `runs/20261108-050007_v2_online_test_seeds0-1-2-3-4`.
 
 **Hedef:** Aşama 3'ün temel çizgisi: koşul **B** (sabit η, kapılama yok).
 

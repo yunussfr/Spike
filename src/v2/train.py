@@ -4,6 +4,7 @@ Model seçimi val R² ile (her `eval_every` epoch'ta akış değerlendirmesi, `s
 """
 
 import copy
+import gc
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -121,12 +122,30 @@ class TrainStep:
             self.n_warm -= 1
             return float(loss)
         if self.g is None:
+            release_graph_memory()                                           # önceki grafların havuzları boşalsın
             self.opt.zero_grad(set_to_none=True)
             self.g = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self.g):
                 self.static_loss = self._eager()
         self.g.replay()
         return float(self.static_loss)
+
+    def release(self) -> None:
+        """Grafı ve grafın havuzunda duran tensörleri (gradyanlar, kayıp) bırakır. Uzun süreçte birçok graf
+        yaratılıp yok edilince Windows'ta replay sırasında erişim ihlali görüldü (KR-040 notu)."""
+        if self.g is None:
+            return
+        torch.cuda.synchronize()
+        self.model.zero_grad(set_to_none=True)
+        self.g, self.static_loss = None, None
+        release_graph_memory()
+
+
+def release_graph_memory() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
 
 
 def pool(ps: list[Prepared]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -185,5 +204,6 @@ def train_model(model: V2Model, ps: Prepared | list[Prepared], cfg: dict[str, An
             log(row)
         if ep - best_ep >= t["patience"] and "val_r2" in row:
             break
+    trainer.release()
     model.load_state_dict(best_state)
     return TrainResult(best, best_ep, len(hist), sum(sec) / len(sec), best_state, hist)

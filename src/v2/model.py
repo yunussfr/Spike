@@ -97,6 +97,8 @@ def stream_predict(model: V2Model, x: torch.Tensor, start: int, stop: int, n_str
             y[:, c: c + chunk] = ys
             for a_, b_ in zip(init, final):
                 a_.copy_(b_)
+        torch.cuda.synchronize()
+        del g, ys, final                                                     # graf havuzu hemen bırakılır
         model.reset_state(B)
     else:
         y = torch.stack([step(xb[:, t], mask[:, t]) for t in range(total)], 1)   # [B, total, D]

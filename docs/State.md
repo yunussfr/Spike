@@ -2,8 +2,28 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Spike v2, V0–V2 tamamlandı; sıradaki V3 (ön-eğitim + Day-0). Eğitilen plif tek oturumda val R² Indy 0,769 / Loco 0,658, 4 ms GRU tavanının üstünde (KR-039). v1 Faz 6 kayma deneyi askıda.
-**Açık kararlar:** v2 — beyincik girdisi (V5), bias güncellemesi (V4) (ARCHITECTURE.md §12.10). Ana mod plif (karar); Loco KV7 ihlali raporlanıyor. v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+**Şu an:** Spike v2, V0–V4 tamamlandı; sıradaki V5 (beyincik + duygu uzayı + duygu-kapılı W_in plastisitesi, KR-044). Oturum içi test R² Indy 0,754 / Loco 0,704 (donuk, ön-eğitimli); Day-0 modeli sonraki günlerde ≈ 0, okuma NLMS'i kurtarmıyor (KR-042).
+**Açık kararlar:** v2 — beyincik girdisi kapılanmış mı (V5, §12.10 nokta 4). Loco KV7 ihlali raporlanıyor. v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+
+---
+
+## 2026-11-08 — Faz V3 + V4 sonuçları, CUDA Graph çöküşü (KR-042, KR-043)
+
+**Yaptıklarım**
+- [x] V3 ayar (seed 100–102) ve rapor (seed 0–4, test) koşuları; V4 val (η seçimi) ve test.
+- [x] Çöküş (replay'de access violation): seed / aşama başına süreç, `--resume` birden çok klasör ve ince ayar / day0 checkpoint'leri, `experiments/v2_collect.py`.
+
+  | | Indy test R² (3 oturum) | Loco test R² (3 oturum) |
+  |---|---|---|
+  | Ön-eğitimli donuk (A) | 0,794 / 0,652 / 0,816 | 0,742 / 0,669 / 0,702 |
+  | Day-0 modeli, Day-k (A) | −0,017 / 0,108 | 0,010 / −0,366 |
+  | Day-0 modeli, Day-k, okuma NLMS (B) | −0,021 / 0,128 | 0,030 / −0,162 |
+
+**Etkisi**
+- V3 kriteri (≥ 0,65) sağlandı. Günler arası boşluk büyük ve okuma uyumu kapatmıyor → V5 tasarımı genişletildi: W_in sürpriz-kapılı plastik, W_rec donuk (KR-044).
+
+**Açık**
+- Etiketsiz kontroller (Day-0 hedefli homeostaz, akan kanal z-skoru) V5'in ilk adımı.
 
 ---
 
