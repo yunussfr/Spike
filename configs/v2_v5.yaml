@@ -1,0 +1,63 @@
+# Faz V5: beyincik + duygu uzayı + duygu-kapılı W_in plastisitesi (experiments/v2_v5.py, ARCHITECTURE.md §12.5, §12.6,
+# §12.13; KR-044). Ayar yalnızca ayar seed'leri (100–102) + val.
+base: v2_online.yaml
+
+experiment:
+  name: v2_v5
+
+cerebellum:                  # CerebellumV2 (§12.5)
+  eta: 1.0e-3                # çevrimiçi NLMS adımı (W_in'den hızlı uyum: zaman ölçeği ayrımı)
+  nlms_eps: 1.0e-4
+  ridge: 1.0e-3              # Day-0 train ridge başlatması: λ·T·I
+  fit_steps: 25000           # ridge: train diliminin sonundaki bu kadar adım (100 s, 4 ms) ...
+  holdout_steps: 5000        # ... ve onu izleyen bu kadar adım (20 s, train) E_slow başlangıcı için
+
+affect:                      # AffectSpaceV2 (§12.6, §12.11)
+  a_fast: 0.05               # spesifikasyon değerleri; tau_*_ms verilirse onlar geçerli (a = 1 − e^(−Δt/τ))
+  a_slow: 0.001              # 4 ms'de a_slow = 0,001 → τ ≈ 4 s: Day-k artışı saniyeler içinde "normal" oluyordu
+  tau_fast_ms: 1000.0
+  tau_slow_ms: 300000.0
+  alpha_gate: 0.25
+  alpha_eta: 2.0
+  eta_0: 5.0e-4              # okuma η_0
+  eps: 1.0e-6
+
+plasticity:                  # W_in üç faktörlü kural (§12.13)
+  eta_in_grid: []            # η_in,0 listesi (v2-W / v2-D_e). Kapalı: kapı 2'de okuma uyumunu geçmedi (KR-045)
+  alpha_in: 1.0e-4           # W_in,0'a çapa
+  delta_max: 0.2             # ‖W_in − W_in,0‖_F ≤ δ_max·‖W_in,0‖_F
+  psi_tau_ms: 64.0           # post-sinaptik iz ψ̄ (okuma başlıklarının orta zaman sabiti)
+  x_tau_ms: 20.0             # ön-sinaptik iz x̃
+  eps: 1.0e-4
+
+renorm:                      # duygu-kapılı kanal yeniden ölçeklemesi (§12.14, KR-045)
+  gated: [[600.0, 3.0], [600.0, 10.0], [60.0, 3.0], [60.0, 10.0]]   # (τ_calm, τ_surp) s: a ≤ 0 ve a = 1'deki zaman sabiti
+  tau_fixed_s: [5.0, 30.0]   # duygusuz sabit kontroller (R_τ; kapı 1'deki R5 / R30)
+  eps: 1.0e-6
+
+persist:                     # kalıcı sürpriz (KR-046): ham hedefli donuk beyincik + sabit Day-0 tabanı + girdi sapması
+  tau_calm_s: .inf           # a < gate_lo: yeniden ölçekleme donuk (λ_norm = 0)
+  tau_surp_s: 5.0            # a ≥ gate_hi: R5 hızı
+  gate_lo: 0.3               # λ_norm kapısı h(a) = clamp((a − lo)/(hi − lo), 0, 1)
+  gate_hi: 0.6
+  tau_fast_s: 5.0            # E_fast zaman sabiti (oturum düzeyi tespit; duygu uzayının 1 s'si yerine)
+  tau_return_s: 30.0         # sakinken (1 − h) oranında m, v'nin Day-0 referansına dönüşü (kısa açılma kalıcı olmaz)
+  drift:
+    tau_s: 10.0              # kanal EMA ortalaması / varyansı (val teşhisi: 30 s'den hızlı, Day-0 yine zarf içinde)
+    var_floor: 1.0e-2        # Day-0'da neredeyse sessiz kanal için v_0 alt sınırı
+    baseline: max            # δ_0 = Day-0 train boyunca en büyük δ (tolerans zarfı); "mean" ortalama
+  variants:                  # src: own (kendi yolu) | monitor (donuk A yolu); w: sapma ağırlığı; combine: max → max(s_cer, s_drift);
+                             # full: + g ve η(t) (ayrı ayrı: g / eta: true); eta_scale: okuma η_0 çarpanı;
+                             # ret: false → dönüş yok; gate: [lo, hi] eşik çifti
+    Pc: {src: monitor, w: 0.0}                      # yalnız beyincik
+    Pd: {src: monitor, w: 1.0}                      # yalnız girdi sapması
+    Pm: {src: monitor, combine: max}                # ikisi birden (ana öneri)
+    P: {src: own, combine: max}                     # φ kendi (yeniden ölçeklenmiş) yolundan
+    Pf: {src: monitor, combine: max, full: true}    # tam sistem: + g_fast/g_slow ve η(t)
+    Pm_nr: {src: monitor, combine: max, ret: false} # dönüşsüz (λ_calm = 0'da kayma donar)
+    Pm_lo: {src: monitor, combine: max, gate: [0.15, 0.45]}   # daha düşük eşik
+  oracle: true               # O: Day-0'da λ = 0, Day-k'de τ_surp (gün bilgisini kullanan üst sınır; yöntem değil)
+
+v5:
+  homeostasis: false         # çevrimiçi ϑ (KR-042: sabit hedefle zararlı)
+  matched: true              # 2. geçiş: G_τ ile eşlenmiş Rm_τ ve karıştırılmış Cg_τ

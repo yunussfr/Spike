@@ -8,7 +8,7 @@ import torch
 
 from src.utils.config import load_config
 from src.v2.model import V2Model
-from src.v2.online import stream_adapt
+from src.v2.online import Controls, stream_adapt
 
 BASE = load_config(Path(__file__).resolve().parents[2] / "configs" / "v2_base.yaml")
 C, D = 5, 2
@@ -127,3 +127,62 @@ def test_adaptation_reduces_error_on_shift() -> None:
     res = run(m, x, y, [0.0, 0.1], start=100, stop=600)
     err = ((res.pred - y[100:600].unsqueeze(0)) ** 2)[:, 250:].mean((1, 2))
     assert err[1] < 0.5 * err[0]
+
+
+# --- KR-044 etiketsiz kontroller (v2-L) ---------------------------------------------------------------------
+
+
+def test_controls_default_equals_v4() -> None:
+    """ρ ile dolu homeo_target ve hiç güncellenmeyen yeniden ölçekleme (decay = 1) V4 akışıyla aynı."""
+    m = make_model()
+    x, y = data()
+    ref = run(m, x, y, [0.0, 0.05], homeo=True, delay=7)
+    N = m.backbone.N
+    ctrl = Controls(homeo_target=torch.full((N,), m.backbone.target_rate), renorm_m0=x.mean(0), renorm_v0=x.var(0),
+                    renorm_decay=1.0, renorm_eps=0.0)
+    out = stream_adapt(m, x, y, 80, 200, 30, [0.0, 0.05], 1e-4, 1e-4, True, label_delay=7, controls=ctrl)
+    assert torch.allclose(ref.pred, out.pred, atol=1e-5) and torch.allclose(ref.theta, out.theta, atol=1e-6)
+
+
+def test_renorm_causal_and_restores_scale() -> None:
+    """Gelecek girdi geçmiş tahmini değiştirmez; ölçeği bozulmuş girdi, yeniden ölçeklemeyle Day-0 çıktısına yaklaşır."""
+    m = make_model()
+    x, y = data(n=600)
+    ctrl = Controls(renorm_m0=x.mean(0), renorm_v0=x.var(0), renorm_decay=0.98, renorm_eps=1e-6)
+    a = stream_adapt(m, x, y, 100, 600, 30, [0.0], 1e-4, 1e-4, False, controls=ctrl).pred
+    x2 = x.clone()
+    x2[400:] = 9.0
+    b = stream_adapt(m, x2, y, 100, 600, 30, [0.0], 1e-4, 1e-4, False, controls=ctrl).pred
+    assert torch.equal(a[:, :300], b[:, :300])                               # t < 400 aynı
+    shifted = x * 3.0 + 2.0                                                  # günler arası ölçek kayması
+    ref = stream_adapt(m, x, y, 100, 600, 30, [0.0], 1e-4, 1e-4, False).pred
+    raw = stream_adapt(m, shifted, y, 100, 600, 30, [0.0], 1e-4, 1e-4, False).pred
+    fix = stream_adapt(m, shifted, y, 100, 600, 30, [0.0], 1e-4, 1e-4, False, controls=ctrl).pred
+    late = slice(250, 500)
+    assert ((fix - ref)[:, late] ** 2).mean() < 0.5 * ((raw - ref)[:, late] ** 2).mean()
+
+
+def test_homeo_target_restored_and_used() -> None:
+    m = make_model()
+    x, y = data()
+    before = m.backbone.rate_ema.clone()
+    tgt = torch.linspace(0.0, 0.2, m.backbone.N)
+    a = run(m, x, y, [0.0], homeo=True)
+    b = stream_adapt(m, x, y, 80, 200, 30, [0.0], 1e-4, 1e-4, True, controls=Controls(homeo_target=tgt))
+    assert not torch.equal(a.theta, b.theta)
+    assert torch.equal(m.backbone.rate_ema, before)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA yok")
+def test_controls_graph_matches_eager() -> None:
+    dev = torch.device("cuda")
+    x, y = data(n=300)
+    x, y = x.to(dev) * 3, y.to(dev)
+    m = make_model().to(dev)
+    ctrl = Controls(homeo_target=torch.linspace(0.01, 0.1, m.backbone.N, device=dev), renorm_m0=x.mean(0) * 0.5,
+                    renorm_v0=x.var(0) * 2.0, renorm_decay=0.95, renorm_eps=1e-6)
+    kw = dict(label_delay=16, controls=ctrl)
+    eager = stream_adapt(m, x, y, 100, 300, 40, [0.0, 0.05], 1e-3, 1e-4, True, chunk=0, **kw)
+    graph = stream_adapt(m, x, y, 100, 300, 40, [0.0, 0.05], 1e-3, 1e-4, True, chunk=64, **kw)
+    assert torch.allclose(eager.pred, graph.pred, atol=1e-4)
+    assert torch.allclose(eager.theta, graph.theta, atol=1e-6)

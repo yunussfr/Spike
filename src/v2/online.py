@@ -31,9 +31,28 @@ class StreamResult:
     theta: torch.Tensor                   # [N] akış sonu ϑ
 
 
+@dataclass
+class Controls:
+    """Etiketsiz kontroller (v2-L, KR-044). Varsayılanlar V4 davranışıdır.
+
+    homeo_target: [N] nöron başına homeostaz hedefi (ör. Day-0 train akışındaki kendi oranı); None → ρ (config).
+                  Verilirse rate_ema bu değerden başlar.
+    homeo_lr:     ϑ adımı; None → config.
+    renorm_m0, renorm_v0: [C] Day-0 train'deki x_norm ortalaması / varyansı. Verilirse kanal istatistikleri akışta
+                  nedensel EMA ile izlenir ve girdi x' = m0 + (x − m)·√(v0 / (v + renorm_eps)) ile Day-0 ölçeğine
+                  döndürülür (yalnız skorlanan adımlarda güncellenir).
+    """
+    homeo_target: torch.Tensor | None = None
+    homeo_lr: float | None = None
+    renorm_m0: torch.Tensor | None = None
+    renorm_v0: torch.Tensor | None = None
+    renorm_decay: float = 0.0
+    renorm_eps: float = 0.0
+
+
 class _Stream:
     def __init__(self, model: V2Model, etas: list[float], anchor_decay: float, eps: float, homeostasis: bool,
-                 delay: int, device: torch.device) -> None:
+                 delay: int, device: torch.device, ctrl: Controls) -> None:
         ro, bb = model.readout, model.backbone
         self.m, self.ro, self.bb = model, ro, bb
         E = len(etas)
@@ -43,6 +62,13 @@ class _Stream:
         self.eta = torch.tensor(etas, device=device).view(E, 1, 1, 1)
         self.alpha, self.eps, self.homeo, self.d = anchor_decay, eps, homeostasis, delay
         self.rate = torch.zeros(bb.N, device=device)
+        self.target = ctrl.homeo_target if ctrl.homeo_target is not None else bb.target_rate
+        self.hlr = ctrl.homeo_lr if ctrl.homeo_lr is not None else bb.homeo_lr
+        self.renorm = ctrl.renorm_m0 is not None
+        if self.renorm:
+            self.m0, self.v0 = ctrl.renorm_m0, ctrl.renorm_v0                # [C]
+            self.rm, self.rv = ctrl.renorm_m0.clone(), ctrl.renorm_v0.clone()
+            self.rd, self.reps = 1.0 - ctrl.renorm_decay, ctrl.renorm_eps
         if delay > 0:                                                        # halka tamponlar: t−d anındaki iz, tahmin, etiket, maske
             D = self.W0.shape[1]
             self.buf_r = torch.zeros(delay, ro.K, bb.N, device=device)       # [d, K, N]
@@ -53,6 +79,12 @@ class _Stream:
     def step(self, xt: torch.Tensor, yt: torch.Tensor, mt: torch.Tensor, j: int) -> torch.Tensor:
         """xt: [1, C], yt: [D], mt: [] skor maskesi (0 burn-in / dolgu, 1 skorlanan), j = (t − başlangıç) mod d → v̂: [E, D]"""
         bb, ro = self.bb, self.ro
+        if self.renorm:                                                      # etiketsiz kanal yeniden ölçekleme (v2-L)
+            dr = self.rd * mt
+            diff = xt[0] - self.rm
+            self.rm.add_(dr * diff)
+            self.rv.add_(dr * (diff * diff - self.rv))
+            xt = self.m0 + (xt - self.rm) * torch.sqrt(self.v0 / (self.rv + self.reps))
         s = bb.step(xt)                                                      # [1, N]
         ro.traces = ro.kappa * ro.traces + (1.0 - ro.kappa) * s.unsqueeze(0)  # [K, 1, N]
         r = ro.traces[:, 0]                                                  # [K, N]
@@ -74,7 +106,7 @@ class _Stream:
         if self.homeo:                                                       # KV1: yerel eşik adaptasyonu (maskeli)
             d = (1.0 - bb.rate_decay) * mt
             bb.rate_ema.mul_(1.0 - d).add_(d * s[0])
-            bb.theta.add_(bb.homeo_lr * mt * (bb.rate_ema - bb.target_rate)).clamp_(bb.theta_min, bb.theta_max)
+            bb.theta.add_(self.hlr * mt * (bb.rate_ema - self.target)).clamp_(bb.theta_min, bb.theta_max)
         return v
 
 
@@ -89,7 +121,7 @@ def _set_state(m: V2Model, st: list[torch.Tensor]) -> None:
 @torch.no_grad()
 def stream_adapt(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int, stop: int, burnin: int,
                  etas: list[float], anchor_decay: float, eps: float, homeostasis: bool,
-                 chunk: int = 0, label_delay: int = 0) -> StreamResult:
+                 chunk: int = 0, label_delay: int = 0, controls: Controls | None = None) -> StreamResult:
     """x: [n, C], y: [n, D] standart hedef (cihazda). [start, stop) skorlanır; akış max(0, start − burnin)'de başlar.
 
     chunk > 0 ve CUDA → CUDA Graph parçaları (chunk, label_delay'in katı olmalı); aksi halde adım adım.
@@ -102,7 +134,10 @@ def stream_adapt(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int, s
         raise ValueError(f"graph_chunk ({chunk}) etiket gecikmesinin ({d}) katı olmalı")
     bb, dev = model.backbone, x.device
     theta0, rate_ema0 = bb.theta.clone(), bb.rate_ema.clone()
-    st = _Stream(model, etas, anchor_decay, eps, homeostasis, d, dev)
+    ctrl = controls or Controls()
+    if ctrl.homeo_target is not None:
+        bb.rate_ema.copy_(ctrl.homeo_target)
+    st = _Stream(model, etas, anchor_decay, eps, homeostasis, d, dev, ctrl)
     model.reset_state(1)
     begin = max(0, start - burnin)
     total = stop - begin

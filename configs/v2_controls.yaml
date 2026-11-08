@@ -1,0 +1,20 @@
+# Faz V5 adım 1: etiketsiz kontroller (v2-L, KR-044) — experiments/v2_online.py ile, yalnız ayar seed'leri + val.
+base: v2_online.yaml
+
+experiment:
+  name: v2_controls
+
+online:
+  eta_grid: [0.0, 1.0e-3]    # η = 0 → saf etiketsiz kontrol; 1e-3 → okuma NLMS'iyle birlikte (v2-B ile birleşim)
+
+controls:
+  renorm_tau_s: 30.0         # akan kanal ortalama / varyans EMA'sının zaman sabiti (s)
+  renorm_eps: 1.0e-6
+  variants:                  # target: fixed → ρ = 0,05; day0 → nöronun referans train akışındaki kendi oranı
+    - {name: A, homeo: false}
+    - {name: H_fixed, homeo: true, target: fixed}
+    - {name: H_day0, homeo: true, target: day0}
+    - {name: H_day0_slow, homeo: true, target: day0, homeo_lr: 1.0e-4}
+    - {name: R30, renorm: true}
+    - {name: R5, renorm: true, renorm_tau_s: 5.0}
+    - {name: R30+H_day0, renorm: true, homeo: true, target: day0}

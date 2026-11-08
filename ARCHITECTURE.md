@@ -422,6 +422,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-08 | KV4, KV6, §12.6, §12.9, §12.14: duygu-kapılı etiketsiz kanal yeniden ölçeklemesi ana sisteme girdi; yeni regülatör λ_norm(t); koşul v2-R. W_in kuralı (§12.13) varsayılan kapalı | KR-045: etiketsiz yeniden ölçekleme günler arası val R² ≈ 0 → ~0,19 ama Day-0'da bedelli; W_in kuralı okuma uyumunu geçmedi (karar kapısı 2). Kullanıcı seçimi |
 | 2026-11-08 | KV1–KV7, §12.1, §12.6, §12.9, §12.13: W_in çevrimiçi, sürpriz-kapılı (η_in = η_in,0·max(0, a)), çapalı ve norm topu sınırlı üç faktörlü yerel kuralla değişebilir; W_rec ve τ donuk. Yeni koşullar v2-W, v2-L; homeostaz hedefi `day0` seçeneği, v2-L'de akan kanal z-skoru | KR-042: günler arası Day-0 modeli ≈ 0, okuma NLMS'i kurtarmıyor (kayma girişte). Kullanıcı önerisi ve onayı (KR-044) |
 | 2026-11-07 | §12.8 Aşama 3: çevrimiçi etiket 500 ms gecikmeli; günler arası model yalnızca Day-0'da eğitilir | KR-041: anında etiketle y_{t−1} kopyası R² 0,999 (uyum kazancı sızıntıya yakın). KR-040: ön-eğitim Day-k train dağılımını görüyordu |
 | 2026-11-03 | Spike v2 hattı eklendi (§12): çevrimdışı eğitilen hızlı/yavaş omurga, Anscombe kodlayıcı, yumuşatılmış hedefli beyincik, sürpriz modülasyonlu η + alt-popülasyon kapılama, 5 başlıklı çapalı okuma; v2 kuralları KV1–KV8. v1 kuralları v1 koduna uygulanmaya devam eder | Kullanıcı spesifikasyonu (`docs/spike_v2_mimari_spesifikasyon.md`, KR-034). KR-033: kayıp doğrusal okunan temsilde (GRU tavanı +0,3 R²); sabit rezervuar bu farkı kapatamıyor |
@@ -474,12 +475,13 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 | **e_cer** (tahmin hatası, v1'deki e) | x̄(t+1) − x̂_smooth(t+1) | Yalnızca W_cer |
 - Beyincik kaybı omurgaya gradyan vermez; e_cer W_in'e ulaşmaz. Duygu uzayı e_cer'i yalnızca **okur**, değiştirmez; W_in'e yalnızca η_in(t) üzerinden, adım boyu olarak etki eder.
 
-**KV4 — Regülatörler yalnızca okuma kapılama kazançlarını, η'yı ve η_in'i üretir.**
+**KV4 — Regülatörler yalnızca okuma kapılama kazançlarını, η'yı, η_in'i ve λ_norm'u üretir.**
 | Regülatör | Etkilediği yer | Aralık | Varsayılan |
 |---|---|---|---|
 | g_fast, g_slow | Okuma izlerinin hızlı / yavaş yarısı (§12.7) | [1 − α_gate, 1 + α_gate] ⊂ [0,5; 2] | 1 |
 | η(t) | Okuma başlıklarının çevrimiçi NLMS adımı | [η_0, η_0·(1 + α_η)] ⊂ [1e-4; 1e-1] | η_0 |
 | η_in(t) | W_in üç faktörlü kuralın adımı (§12.13) | [0, η_in,0] | 0 (sakinken W_in yalnızca çapaya döner) |
+| λ_norm(t) | Etiketsiz kanal yeniden ölçeklemesinin EMA adımı (§12.14) | [λ_calm, λ_surp] | λ_calm (sakinken neredeyse donuk) |
 - τ, ϑ, W_rec, beyincik adımı ve başka hiçbir hiperparametre regülatörden etkilenmez. β (karar sıcaklığı) regresyonda kullanılmaz.
 
 **KV5 — Regülatörsüz mod her zaman çalışır.** `regulators.enabled: false` → g_fast = g_slow = 1, η ve η_in sabit (v2-A'da 0, v2-B'de η̄ ve η_in = 0, v2-W'de η̄ ve η̄_in). Ablation için zorunludur ve testlidir.
@@ -489,7 +491,7 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 - Akış değerlendirmesinde durum sıfırlanmaz. Çevrimdışı eğitimde her pencere yeni bir dizidir.
 - Beyincik x̂_smooth(t+1)'i üretirken x(t+1)'i ve x̄(t+1)'i göremez.
 - Prequential sıra: v̂(t) üretilir ve skorlanır; güncelleme ancak sonra e_v(t) ile yapılır.
-- Kodlayıcı istatistikleri (μ_ch, σ_ch) ve tüm ölçekler yalnızca train diliminden hesaplanır. İstisna yalnızca etiketsiz kontrol koşulu v2-L'dir: kanal z-skoru akışta nedensel EMA ile güncellenebilir (`controls.input_renorm`, KR-044).
+- Kodlayıcı istatistikleri (μ_ch, σ_ch) ve tüm ölçekler yalnızca train diliminden hesaplanır. İstisna: §12.14'teki etiketsiz kanal yeniden ölçeklemesi (KR-045) — x_norm'un kanal ortalaması / varyansı akışta nedensel EMA ile izlenir ve girdi Day-0 train ölçeğine döndürülür. Yalnızca geçmiş girdiyi kullanır, etiket kullanmaz; referans (m_0, v_0) Day-0 train'den.
 
 **KV7 — Ateşleme rejimi (k-WTA yerine homeostaz).**
 - v2 omurgasında k-WTA yoktur. Hedef ortalama oran ρ = 0,05 (config `target_rate`).
@@ -550,6 +552,7 @@ dominance ← 0,95·dominance + 0,05·tanh(10·(E_fast(t−1) − E_fast(t)) / (
 g_fast     = 1 + α_gate·a(t),   g_slow = 1 − α_gate·a(t)          # α_gate = 0,25
 η(t)       = η_0·(1 + α_η·max(0, a(t)))                            # η_0 = 5e-4, α_η = 2
 η_in(t)    = η_in,0·max(0, a(t))                                    # W_in adımı (§12.13); sakinken 0
+λ_norm(t)  = λ_calm + (λ_surp − λ_calm)·max(0, a(t))                # yeniden ölçekleme adımı (§12.14, KR-045)
 ```
 - Duygu uzayı öğrenmez: sabit kuraldır, yalnızca durumunu ilerletir. Durum yeni akışta sıfırlanır.
 - v1'in z / üç baş / E-M-R / perturbasyonla öğrenilen W_r yapısı (§3.4–§3.5) v2'de yoktur. Gerekirse sonraki bir v2 fazında ayrı kararla geri eklenir.
@@ -583,9 +586,10 @@ v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
 |---|---|---|
 | **v2-A** | Donuk model, η = 0 | Ön-eğitim + ince ayarın kendisi |
 | **v2-B** | Çapalı NLMS, η = v2-D'nin η̄'sı (eşlenmiş), g = 1 | Temel çevrimiçi uyum (birincil adil kontrol) |
-| **v2-C** | v2-D'nin η(t) ve η_in(t) dizileri zamanda karıştırılmış | Kazanç zamanlamadan mı, varyanstan mı geliyor |
+| **v2-C** | v2-D'nin η(t), η_in(t) ve λ_norm(t) dizileri zamanda karıştırılmış | Kazanç zamanlamadan mı, varyanstan mı geliyor |
 | **v2-W** | v2-B + W_in kuralı, sabit η_in (v2-D'nin η̄_in'i, eşlenmiş), duygu yok | W_in plastisitesinin kendisi; duygu kapısının kontrolü |
-| **v2-D** | Tam sistem: sürpriz modülasyonlu η(t) ve η_in(t) + g_fast/g_slow + çapalı NLMS + W_in kuralı + homeostaz | Önerilen yöntem |
+| **v2-D** | Tam sistem: sürpriz modülasyonlu λ_norm(t) (duygu-kapılı yeniden ölçekleme, KR-045) ve η(t) + g_fast/g_slow + çapalı NLMS (+ ops. W_in kuralı, homeostaz) | Önerilen yöntem |
+| **v2-R** | v2-B + sabit hızlı yeniden ölçekleme (λ̄_norm = v2-D'nin ortalaması, eşlenmiş; ayrıca sabit τ = 5 / 30 s) | Duygu kapısının yeniden ölçeklemeye katkısı |
 | **v2-L** | Etiketsiz kontrol: Day-0 hedefli homeostaz ve/veya akan kanal z-skoru, η = 0 | Kaymanın ne kadarı yalnızca ölçek? |
 | **v2-E** | Akış ortasında rastgele 20 giriş kanalı sıfırlanır; A, B, D üzerinde | Toparlanma süresi |
 
@@ -662,3 +666,17 @@ W_in    ← W_in,0 + Π_δ(W_in − W_in,0)                       # ‖·‖_F �
 - Sakinken (a ≤ 0) η_in = 0 ve W_in yalnızca W_in,0'a geri çekilir: öğrenilen ağırlıklara sadakat. Sürpriz yükselince W_in açılır.
 - Beyincik W_cer Day-0 train diliminde ridge ile başlatılır (Aşama 2b) ve E_slow Day-0 düzeyinden başlar; çevrimiçi NLMS'i W_in'den hızlı uyum sağlamalıdır (zaman ölçeği ayrımı, geri besleme döngüsüne karşı).
 - Parametreler `plasticity.*` (η_in,0, α_in, δ_max, τ_ψ, τ_x) YAML'dan; yalnızca ayar seed'leri + val ile seçilir.
+- **Durum (KR-045):** karar kapısı 2'de okuma uyumunu (v2-B) geçmedi; η_in arttıkça zarar veriyor. Kod ve testler duruyor, varsayılan kapalı (`plasticity.eta_in_grid: []`).
+
+### 12.14 Duygu-kapılı etiketsiz kanal yeniden ölçeklemesi (KR-045)
+Koşul başına, her adımda (skorlanan adımlarda güncellenir; burn-in'de durum Day-0 değerinde kalır):
+```
+m(t) ← m(t−1) + λ_norm(t)·(x(t) − m(t−1))                          # kanal ortalaması                 [C]
+v(t) ← v(t−1) + λ_norm(t)·((x(t) − m(t−1))² − v(t−1))              # kanal varyansı                   [C]
+x'(t) = m_0 + (x(t) − m(t))·√(v_0 / (v(t) + ε))                    # Day-0 train ölçeğine dönüş; omurga x' görür
+λ_norm(t) = λ_calm + (λ_surp − λ_calm)·max(0, a(t−1)),   λ = 1 − exp(−Δt/τ)
+```
+- m_0, v_0: Day-0 train diliminde x_norm'un kanal ortalaması / varyansı; m, v bu değerlerden başlar.
+- Beyincik hedefi x̄ yeniden ölçeklenmiş x'ten hesaplanır: ölçek geri döndükçe e_cer ve sürpriz söner, yeniden ölçekleme yavaşlar (kapalı döngü).
+- Sakinken (a ≤ 0) τ = τ_calm (uzun): Day-0'da sabit hızlı yeniden ölçeklemenin bedeli (val'de −0,01…−0,05) kalkmalı. Sürprizde τ → τ_surp (kısa).
+- Etiket kullanmaz; KV6'nın tek istisnasıdır. Parametreler `renorm.*` (τ_calm, τ_surp, ε) YAML'dan, yalnızca ayar seed'leri + val ile.

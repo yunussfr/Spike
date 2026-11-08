@@ -10,8 +10,9 @@ Modlar:
   spiking_gru z, r, h̃ GRU kapıları; V = (1−z)·V + z·h̃ − ϑ·s(t−1); dışarıya yalnızca ikili s
   tau_gru     aynı kapılar, eşiksiz; çıktı sürekli V (üst sınır kontrolü, KV7'den muaf)
 
-KV1: parametreler yalnızca çevrimdışı gradyanla öğrenilir. Çevrimiçi (eval) değişebilen tek şey ϑ'dır
-(`homeostasis_update`). Omurgada `update` yoktur.
+KV1: parametreler yalnızca çevrimdışı gradyanla öğrenilir. Çevrimiçi (eval) değişebilenler ϑ (`homeostasis_update`)
+ve plif'te W_in'dir (KR-044, §12.13). W_in güncellemesi omurganın içinde değil akışta (`src/v2/online.py`) yapılır:
+`step(x, w_in=..., theta=...)` akış başına (koşul başına) W_in ve ϑ kopyasıyla çalışır, parametrelere dokunmaz.
 """
 
 import math
@@ -115,16 +116,24 @@ class TemporalBackbone(nn.Module):
         self.i_syn = torch.zeros(batch_size, self.N, device=dev)             # [B, N] (yalnızca plif)
         self.s = torch.zeros(batch_size, self.N, device=dev)                 # [B, N] son çıktı
 
-    def step(self, x: torch.Tensor) -> torch.Tensor:
-        """Tek adım. x: [B, C] → s: [B, N] (tau_gru'da sürekli V)."""
+    def step(self, x: torch.Tensor, w_in: torch.Tensor | None = None, theta: torch.Tensor | None = None) -> torch.Tensor:
+        """Tek adım. x: [B, C] → s: [B, N] (tau_gru'da sürekli V).
+
+        w_in: [B, N, C] akış başına giriş ağırlığı (yalnızca plif; bias parametreden), theta: [B, N] akış başına ϑ.
+        Verilmezse parametre / buffer kullanılır.
+        """
+        if (w_in is not None or theta is not None) and self.mode != "plif":
+            raise ValueError("w_in / theta geçişi yalnızca plif modunda")
+        th = self.theta if theta is None else theta
         x_in = self.drop(x)
         s_prev = self.drop(self.s)
         if self.mode == "plif":
             beta = torch.exp(-self.dt / self.tau_mem())                      # [N]
             alpha = torch.exp(-self.dt / self.tau_syn())
-            self.i_syn = alpha * self.i_syn + self.w_in(x_in) + self.w_rec(s_prev)
-            self.v = beta * self.v + (1.0 - beta) * self.i_syn - self.theta * self.s
-            out = spike_fn(self.v - self.theta, self.surrogate_scale)
+            drive = self.w_in(x_in) if w_in is None else torch.einsum("bnc,bc->bn", w_in, x_in) + self.w_in.bias
+            self.i_syn = alpha * self.i_syn + drive + self.w_rec(s_prev)
+            self.v = beta * self.v + (1.0 - beta) * self.i_syn - th * self.s
+            out = spike_fn(self.v - th, self.surrogate_scale)
         else:
             z = torch.sigmoid(self.w_z(x_in) + self.u_z(s_prev))
             r = torch.sigmoid(self.w_r(x_in) + self.u_r(s_prev))

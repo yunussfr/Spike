@@ -34,9 +34,9 @@ Depoda iki mimari hattı var (ARCHITECTURE.md başındaki "Sürümler" notu):
 1. **KV1:** Omurga (ağırlıklar, τ_mem, τ_syn) yalnızca çevrimdışı aşamalarda gradyanla eğitilir. Çevrimiçi akışta `requires_grad=False`; W_rec, τ, bias değişmez. Çevrimiçi değişebilenler: homeostatik eşik ϑ ve (plif, `plasticity.enabled`) W_in — yalnız §12.13'teki duygu-kapılı, çapalı, norm topu sınırlı yerel kuralla; akış sonunda W_in,0 geri yüklenir (KR-044).
 2. **KV2:** Çevrimiçi öğrenme yereldir: gradyan / optimizer yok; yalnızca beyincik NLMS'i, çapalı okuma NLMS'i, homeostaz ve W_in üç faktörlü kuralı.
 3. **KV3:** e_v (hız hatası) çevrimiçi okuma başlıklarını ve W_in'i (okuma ağırlıklarıyla geri besleme), e_cer (tahmin hatası) yalnızca W_cer'i eğitir. Beyincik kaybı omurgaya gradyan vermez. Duygu uzayı yalnızca okur.
-4. **KV4:** Regülatörler yalnızca g_fast, g_slow ∈ [1−α_gate, 1+α_gate], η(t) ∈ [η_0, η_0(1+α_η)] ve η_in(t) ∈ [0, η_in,0] üretir. τ ve W_rec'e dokunmaz.
+4. **KV4:** Regülatörler yalnızca g_fast, g_slow ∈ [1−α_gate, 1+α_gate], η(t) ∈ [η_0, η_0(1+α_η)], η_in(t) ∈ [0, η_in,0] ve λ_norm(t) ∈ [λ_calm, λ_surp] (duygu-kapılı kanal yeniden ölçeklemesi, KR-045) üretir. τ ve W_rec'e dokunmaz.
 5. **KV5:** `regulators.enabled: false` her zaman çalışmalı (g = 1, η ve η_in sabit).
-6. **KV6:** Akışta durum sıfırlanmaz; beyincik x(t+1)/x̄(t+1)'i göremez; prequential (önce skorla, sonra güncelle); kodlayıcı istatistikleri yalnızca train'den.
+6. **KV6:** Akışta durum sıfırlanmaz; beyincik x(t+1)/x̄(t+1)'i göremez; prequential (önce skorla, sonra güncelle); kodlayıcı istatistikleri yalnızca train'den — tek istisna §12.14'teki etiketsiz, nedensel kanal yeniden ölçeklemesi (KR-045).
 7. **KV7:** k-WTA yok; hedef oran ρ = 0,05, homeostatik bant [0,02; 0,08]. Oran alt-popülasyon başına loglanır, bant dışı hata. `tau_gru` muaf.
 8. **KV8:** Kodda sabit hiperparametre yok (spesifikasyon kodundaki sabitler dahil) — her şey YAML'dan. Config + seed + git hash + metrik + checkpoint hash'leri kaydedilir. Sonuçlar ≥5 seed, ortalama ± std.
 9. Test seti üzerinde hiperparametre/regülatör ayarı yapılmaz. Ayar: seed 100–102 ve val.

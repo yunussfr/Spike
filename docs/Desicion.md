@@ -726,6 +726,13 @@ Her kayıt:
 - **Sıra ve karar kapıları:** (1) etiketsiz kontroller (v2-L) val'de; (2) v2-W val — B'yi geçmiyorsa duygu kapısı anlamsız, kullanıcıya dönülür; (3) beyincik + duygu (v2-D, v2-C) val; (4) rapor seed'leri test, Wilcoxon.
 - **Kullanılmayanlar:** evrimsel eğitim (duygu hiperparametreleri için CMA-ES ileride düşünülebilir); W_rec çevrimiçi plastisitesi (kararlılık ve unutma riski).
 
+### KR-045 — Karar kapıları 1–2: etiketsiz yeniden ölçekleme işe yarıyor, W_in kuralı yaramıyor → duygu-kapılı yeniden ölçekleme (kullanıcı seçimi)
+- **Kapı 1, etiketsiz kontroller** (`runs/20261108-101801_v2_online_val_seeds100-101-102`, ayar seed'leri, val, okuma η = 1e-3): günler arası 4 Day-k oturumunun ortalaması A 0,02 → kanal yeniden ölçekleme R5 (τ 5 s) **0,19**, R30 0,16; Day-0 hedefli homeostaz 0,10; sabit hedefli homeostaz −0,08. Bedel: Day-0 / oturum içinde R5 −0,03…−0,05, R30 −0,01…−0,05. Day-0 hedefli homeostaz sabit hedefin oturum içi zararını gideriyor. Indy 0630 hiçbir varyantta düzelmiyor (kanal kimliği kaymış olmalı).
+- **Beyincik kaymayı görüyor** (seed 100, Day-0 train'de ridge, val'de e_cer²): Loco Day-0 ×1,5, Day-k ×6,9 / ×5,0; Indy Day-0 ×1,9, 0630 ×3,0, 0131 ×1,85 (ayırt edilemiyor; x̄ varyansı 3 kat düşük).
+- **Duygu sabitleri:** spesifikasyondaki a_s = 0,001 4 ms'de τ ≈ 4 s: Day-k artışı saniyeler içinde taban oluyordu. Zaman sabitleri ms ile: τ_fast 1 s, τ_slow 300 s; E_slow başlangıcı Day-0 train'in ayrılmış son 20 s'sindeki hata. Loco seed 100: a⁺ Day-0 0,05, Day-k 0,16–0,20 (ilk çeyrek 0,31–0,42).
+- **Kapı 2, W_in kuralı** (seed 100, val, Day-k ortalaması): Loco B 0,044; W η_in 0,1 / 1 / 10: 0,048 / −0,22 / −0,93; Indy 0131 B 0,07, W 0,1 0,15, W 1 −0,12. 500 ms gecikmeli, okuma ağırlıklarıyla yayınlanan hata girişi yeniden eşlemek için fazla gürültülü. Duygu kapısı korumada işe yarıyor (η_in 10, Day-0: W 0,39, D 0,65) ama Day-k'de kazanç yok.
+- **Karar (kullanıcı, 2026-11-08):** duygunun açtığı giriş uyumu etiketsiz kanal yeniden ölçeklemesinin hızı olur (§12.14): λ_norm(t) = λ_calm + (λ_surp − λ_calm)·max(0, a). KV4'e λ_norm regülatörü, KV6'ya istisna eklendi. W_in kuralı varsayılan kapalı. Yeni kontrol v2-R (eşlenmiş sabit hızlı yeniden ölçekleme); v2-C λ_norm dizisini de karıştırır.
+
 ---
 
 ## Altyapı
