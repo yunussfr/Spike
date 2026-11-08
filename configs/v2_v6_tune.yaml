@@ -1,0 +1,24 @@
+# V5 kapanışı: dinamik duygu (KR-047) val ayarı; yalnızca ayar seed'leri (100–102) + val.
+# Koşu 1 (runs/20261108-173151_v2_v6_val_seeds100-101-102): iç arousal günü ayırmıyor (a⁺ Day-0 0,18, Day-k 0,00);
+# sensör arousal'ı ayırıyor (0,05 / 0,85); valens (fren + konsolidasyon + kısma) Day-k'de zararlı (Ds 0,182, Ds_nv 0,224).
+# Koşu 2: sensör arousal'lı, valenssiz taban (Dn) üzerinde bileşenler tek tek; fren yüksek gazı korur mu (g9).
+# Bg / Pg: tüm akışlar üzerinden eşlenmiş sabit η, α (koşu 1 Ds_nv ortalaması; oturum başına eşleme gün bilgisini sızdırır).
+# Not: v2_v6.yaml sonradan seçilen değerlerle güncellendi; koşuların tam config'i koşu klasöründeki config.yaml'dadır
+# (koşu 1: runs/20261108-173151_…, koşu 2: runs/20261108-181814_…).
+base: v2_v6.yaml
+
+v6:
+  fixed: [A, B, R5, Pm, Pm3, O, Bg, Pg]
+  global_matched: {eta: 2.9e-3, alpha: 6.9e-5}
+  variants:
+    Dn: {arousal: sensor, brake: false, consolidate: false, rho_v: 0.0}          # taban: gaz + çapa gevşetme + g
+    Dn_nl: {arousal: sensor, brake: false, consolidate: false, rho_v: 0.0, loosen: false}   # yalnız gaz
+    Dn_ngas: {arousal: sensor, brake: false, consolidate: false, rho_v: 0.0, gas: false}    # yalnız gevşetme
+    Dn_ng: {arousal: sensor, brake: false, consolidate: false, rho_v: 0.0, gate: false}     # g kapısı yok
+    Dn_b: {arousal: sensor, consolidate: false, rho_v: 0.0, tau_brake_s: 20.0}             # + yumuşak fren
+    Dn_c: {arousal: sensor, brake: false, rho_v: 0.0}                                       # + konsolidasyon
+    Dn_r: {arousal: sensor, brake: false, consolidate: false}                               # + rahatlamada η kısma
+    Dn_g4: {arousal: sensor, brake: false, consolidate: false, rho_v: 0.0, alpha_eta: 4.0}  # en çok 5·η_0
+    Dn_g9: {arousal: sensor, brake: false, consolidate: false, rho_v: 0.0, alpha_eta: 9.0}  # en çok 10·η_0, frensiz
+    Ds_g9: {arousal: sensor, alpha_eta: 9.0}                                                # en çok 10·η_0, valens açık
+  matched: [Dn]

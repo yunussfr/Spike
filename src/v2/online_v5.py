@@ -22,6 +22,14 @@ Kalıcı sürpriz (KR-046, koşul başına seçenekler):
   - `gate_lo / gate_hi`: λ_norm = λ_calm + (λ_surp − λ_calm)·h,  h = clamp((a − lo)/(hi − lo), 0, 1)
   - `lam_return`: sakinken m, v ← m, v + λ_ret·(1 − h)·(m_0, v_0 − m, v) (kısa açılmanın kaydırması kalıcı olmaz)
 Varsayılanlarla (False, None, −1, False, None, 0, 0, 1, 0) davranış KR-045 akışıyla aynıdır.
+
+Dinamik duygu (KR-047, `dyn` verilen koşul; `AffectDynamics`):
+  - sensör (yeniden ölçekleme kapısı): tüm koşullar için ortak izleme yolu — koşul 0'ın (donuk A) izleri, Day-0 W_cer,
+    ham hedef — ve girdi sapması; koşulun `aff` durumu (a_fast, sabit taban, eşikli kapı, dönüş) bununla beslenir.
+  - koşulun kendi beyinciği iç yoldur (`cer_raw = False`, `cer_src = −1`): s_int ve başlık uyuşmazlığı u → arousal a_int.
+  - valens / dominans gecikmeli okuma hatasından; η, α_anchor ve konsolidasyon c bunlardan; çapa akış içinde W_anc
+    (W_0'dan başlar, W_anc ← W_anc + λ_c·c·(W − W_anc)); g_fast = 1 + α_gate·a_int.
+  - `alpha_anchor`: koşul başına sabit α (eşlenmiş kontroller); `alpha_seq` / `cons_seq`: v2-C dış dizileri.
 """
 
 import math
@@ -30,10 +38,37 @@ from typing import Any
 
 import torch
 
-from src.v2.affect import AffectSpaceV2
+from src.v2.affect import AffectDynamics, AffectSpaceV2
 from src.v2.cerebellum import CerebellumV2
 from src.v2.model import V2Model
 from src.v2.online import Controls
+
+
+@dataclass
+class DynSpec:
+    """Dinamik duygu parametreleri (KR-047); EMA adımları adım başına (λ = 1 − e^(−Δt/τ))."""
+    w_u: float                      # arousal karışımında başlık uyuşmazlığının ağırlığı
+    lam_a: float                    # arousal E_a adımı
+    lam_f: float                    # valens hızlı EMA
+    lam_m: float                    # valens orta EMA (λ_m < λ_f)
+    lam_d: float                    # dominans EMA
+    rho_v: float                    # rahatlamada η kısma: η·(1 − ρ_v·v⁺)
+    alpha_b: float                  # frende ek çapa adımı
+    lam_c: float                    # konsolidasyon adımı
+    delta_m: float                  # m = clamp(‖W − W_anc‖ / (δ_m·‖W_0‖), 0, 1)
+    gas: bool = True                # η'yı arousal'la aç
+    brake: bool = True
+    loosen: bool = True
+    consolidate: bool = True
+    a_mode: int = 0                 # kontrolü süren arousal: 0 iç (s_int + u), 1 sensör (kalıcı sürpriz), 2 ikisinin maks.
+    gas_dom: bool = False           # gaz a⁺·d⁻ (dominans düşükken)
+
+
+@dataclass
+class DynBase:
+    """Day-0 tabanları (donuk model, Day-0 train sonundaki ayrılmış dilim): başlık uyuşmazlığı u_0, okuma hatası q_0."""
+    u0: float
+    q0: float
 
 
 @dataclass
@@ -65,6 +100,10 @@ class Condition:
     gate_lo: float = 0.0                       # λ_norm kapısı h(a) = clamp((a − lo)/(hi − lo), 0, 1)
     gate_hi: float = 1.0
     lam_return: float = 0.0                    # (1 − h)·λ_ret ile m, v Day-0 referansına (m_0, v_0) çekilir
+    dyn: DynSpec | None = None                 # dinamik duygu (KR-047)
+    alpha_anchor: float | None = None          # sabit çapa adımı (None → akışın anchor_decay'i)
+    alpha_seq: torch.Tensor | None = None      # [L] v2-C: α(t) dış dizisi (dyn gerekli)
+    cons_seq: torch.Tensor | None = None       # [L] v2-C: konsolidasyon c(t) dış dizisi (dyn gerekli)
 
 
 @dataclass
@@ -163,7 +202,8 @@ class Plasticity:
 class _StreamV5:
     def __init__(self, model: V2Model, conds: list[Condition], cer: CerebellumV2, aff: AffectSpaceV2,
                  plast: Plasticity, alpha_sm: float, anchor_decay: float, eps: float, homeostasis: bool,
-                 delay: int, ctrl: Controls, L: int, device: torch.device, drift: Drift | None = None) -> None:
+                 delay: int, ctrl: Controls, L: int, device: torch.device, drift: Drift | None = None,
+                 dyn_base: DynBase | None = None) -> None:
         ro, bb = model.readout, model.backbone
         self.bb, self.ro, self.cer, self.aff, self.pl = bb, ro, cer, aff, plast
         E = len(conds)
@@ -250,13 +290,59 @@ class _StreamV5:
             self.drift, self.delta0 = DriftMonitor(self.m0, self.v0, drift), drift.delta0
         self.plastic = any(c.eta_in0 > 0 or (c.eta_in_seq is not None and bool(c.eta_in_seq.abs().sum() > 0))
                            for c in conds)                                   # W_in kuralı yoksa ortak Linear yol
+        # dinamik duygu (KR-047)
+        self.has_dyn = any(c.dyn is not None for c in conds)
+        if any((c.alpha_seq is not None or c.cons_seq is not None) and c.dyn is None for c in conds):
+            raise ValueError("alpha_seq / cons_seq yalnızca dyn koşulunda")
+        if self.has_dyn:
+            c0 = conds[0]
+            if dyn_base is None or dyn_base.u0 <= 0 or dyn_base.q0 <= 0:
+                raise ValueError("dinamik duygu için pozitif Day-0 tabanları (DynBase) gerekli")
+            if c0.dyn is not None or c0.renorm or c0.eta0 != 0 or c0.eta_in0 != 0 or c0.eta_seq is not None:
+                raise ValueError("dinamik duygu: koşul 0 donuk A olmalı (ortak izleme yolu)")
+        self.has_avec = self.has_dyn or any(c.alpha_anchor is not None for c in conds)
+        self.alpha_c = f([anchor_decay if c.alpha_anchor is None else c.alpha_anchor for c in conds])   # [E]
+        dz = DynSpec(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False, False, False, False)   # dyn'siz: nötr
+        ds = [c.dyn or dz for c in conds]
+        self.is_dyn = f([float(c.dyn is not None) for c in conds])
+        self.rho_v, self.alpha_b = f([s.rho_v for s in ds]), f([s.alpha_b for s in ds])
+        self.lam_c, self.delta_m = f([s.lam_c for s in ds]), f([s.delta_m for s in ds])
+        self.f_gas, self.f_brake = f([float(s.gas) for s in ds]), f([float(s.brake) for s in ds])
+        self.f_loosen, self.f_cons = f([float(s.loosen) for s in ds]), f([float(s.consolidate) for s in ds])
+        if any(s.a_mode not in (0, 1, 2) for s in ds):
+            raise ValueError("DynSpec.a_mode 0 (iç), 1 (sensör) ya da 2 (maks.) olmalı")
+        self.a_mode, self.f_gas_dom = f([float(s.a_mode) for s in ds]), f([float(s.gas_dom) for s in ds])
+        self.dyn = AffectDynamics(f([s.w_u for s in ds]), f([s.lam_a for s in ds]), f([s.lam_f for s in ds]),
+                                  f([s.lam_m for s in ds]), f([s.lam_d for s in ds]), aff.eps)
+        self.u0, self.q0 = (dyn_base.u0, dyn_base.q0) if dyn_base is not None else (1.0, 1.0)
+        self.W_anc = self.W.clone()                                          # [E, K, D, N] akış içi çapa
+        self.w0_norm = self.W0.norm()
+        self.w_mon = cer.w0                                                  # [C, P] ortak izleme yolu (donuk)
+        self.phi_mon = torch.zeros(cer.w0.shape[1], device=device)           # [P]
+        self.x_hat_mon = torch.zeros(C, device=device)                       # [C]
+        self.valid_mon = torch.zeros((), device=device)
+        self.has_lseq = f([float(c.lam_seq is not None) for c in conds])
+        self.has_aseq = f([float(c.alpha_seq is not None) for c in conds])
+        self.has_cseq = f([float(c.cons_seq is not None) for c in conds])
+        self.seq_alpha = torch.zeros(E, L, device=device)
+        self.seq_cons = torch.zeros(E, L, device=device)
+        for e, c in enumerate(conds):
+            if c.alpha_seq is not None:
+                self.seq_alpha[e] = c.alpha_seq
+            if c.cons_seq is not None:
+                self.seq_cons[e] = c.cons_seq
+            if c.lam_seq is not None:
+                self.seq_lam[e] = c.lam_seq
+        self.zE = torch.zeros(E, device=device)                              # dyn'siz akışta boş çıktılar
         cer.reset_state(E)
         aff.reset_state(E, 1.0, device, a_fast=f([aff.a_f if c.a_fast is None else c.a_fast for c in conds]),
                         slow_on=f([0.0 if c.fixed_slow else 1.0 for c in conds]))   # ε² Day-0 tabanına bölünür
 
     def step(self, xt: torch.Tensor, yt: torch.Tensor, mt: torch.Tensor, j: int, seq_eta: torch.Tensor,
-             seq_eta_in: torch.Tensor, seq_lam: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """xt: [1, C], yt: [D], mt: [], seq_*: [E] o adımın dış dizisi → v̂ [E, D], a, η, η_in, λ, s_cer, s_drift [E]"""
+             seq_eta_in: torch.Tensor, seq_lam: torch.Tensor, seq_alpha: torch.Tensor,
+             seq_cons: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """xt: [1, C], yt: [D], mt: [], seq_*: [E] o adımın dış dizisi → v̂ [E, D], a, η, η_in, λ, s_cer, s_drift,
+        a_int, valens, dominans, α, c, u, fren, s_sens [E]"""
         bb, ro, cer, aff, pl = self.bb, self.ro, self.cer, self.aff, self.pl
         E = self.E
         # 0. koşul başına etiketsiz yeniden ölçekleme (§12.14), adım λ_norm a_{t−1}'den
@@ -282,21 +368,45 @@ class _StreamV5:
         gvec = torch.cat([self.g_fast.unsqueeze(1).expand(E, self.half),
                           (2.0 - self.g_fast).unsqueeze(1).expand(E, bb.N - self.half)], 1)   # [E, N]
         r = ro.traces.transpose(0, 1) * gvec.unsqueeze(1)                    # [E, K, N] kapılı
-        v = (torch.einsum("ekdn,ekn->ekd", self.W, r) + self.b).mean(1)      # [E, D]
+        vk = torch.einsum("ekdn,ekn->ekd", self.W, r) + self.b               # [E, K, D] başlık başına
+        v = vk.mean(1)                                                       # [E, D]
         # 2. beyincik + duygu (x̄_t artık biliniyor; x̂_t φ_{t−1}'den)
         tgt = torch.where(self.cer_raw > 0, self.x_bar_raw.expand(E, -1), self.x_bar)   # [E, C]
         e_cer = cer.error(tgt)                                               # [E, C]
         cer.update(e_cer, mt, self.cer_eta)
         s_cer = e_cer.pow(2).mean(1) / self.e2_0                             # [E] Day-0 tabanına göre
-        mix = torch.where(self.dmax > 0, torch.maximum(s_cer, self.s_drift),
-                          (1.0 - self.drift_w) * s_cer + self.drift_w * self.s_drift)   # [E]
+        if self.has_dyn:                                                     # ortak sensör: A yolu, donuk W_cer, ham x̄
+            s_mon = ((self.x_bar_raw - self.x_hat_mon) * self.valid_mon).pow(2).mean() / self.e2_0   # []
+            s_sens = torch.where(self.is_dyn > 0, s_mon, s_cer)              # [E]
+        else:
+            s_sens = s_cer
+        mix = torch.where(self.dmax > 0, torch.maximum(s_sens, self.s_drift),
+                          (1.0 - self.drift_w) * s_sens + self.drift_w * self.s_drift)   # [E]
         aff.update(mix, mt)
         g_fast, eta, eta_in = aff.forward(self.enabled, self.gate_on, self.eta0, self.alpha_eta, self.eta_in0)
+        if self.has_dyn:                                                     # KR-047: a_int, v, d → η, α, c, g
+            u = vk.var(1, unbiased=False).mean(1) / self.u0                  # [E] başlık uyuşmazlığı / u_0
+            a_in = self.dyn.update_arousal(s_cer, u, mt)                     # iç arousal (s_int + u)
+            a_int = torch.where(self.a_mode == 0, a_in,                      # kontrolü süren arousal
+                                torch.where(self.a_mode == 1, aff.a, torch.maximum(a_in, aff.a)))
+            m_l = ((self.W - self.W_anc).flatten(1).norm(dim=1) / (self.delta_m * self.w0_norm)).clamp(0.0, 1.0)
+            v_used, d_used = self.dyn.v.clone(), self.dyn.d.clone()          # e_v(t − 1)'e kadar (bu adımda kullanılan)
+            eta_d, alpha_d, brk, cns = AffectDynamics.controls(
+                a_int, v_used, d_used, m_l, self.eta0, self.alpha_eta, self.rho_v, self.alpha_c, self.alpha_b,
+                self.f_gas, self.f_brake, self.f_loosen, self.f_cons, self.f_gas_dom)
+            dmask = self.is_dyn > 0
+            eta = torch.where(dmask, eta_d, eta)
+            g_fast = torch.where(dmask, 1.0 + aff.alpha_gate * a_int * self.gate_on, g_fast)
+            alpha_t = torch.where(self.has_aseq > 0, seq_alpha, torch.where(dmask, alpha_d, self.alpha_c))
+            cons_t = torch.where(self.has_cseq > 0, seq_cons, cns * self.is_dyn)
+            brk = brk * self.is_dyn
+        else:
+            alpha_t = self.alpha_c
         self.eta_t.copy_(torch.where(self.has_seq > 0, seq_eta, eta))
         self.eta_in_t.copy_(torch.where(self.has_seq > 0, seq_eta_in, eta_in))
         h = ((aff.a - self.gate_lo) / (self.gate_hi - self.gate_lo)).clamp(0.0, 1.0)   # [E]
         lam = self.lam_calm + (self.lam_surp - self.lam_calm) * h * self.enabled
-        self.lam_t.copy_(torch.where(self.has_seq > 0, seq_lam, lam))      # bir sonraki adımın λ_norm'u
+        self.lam_t.copy_(torch.where(self.has_lseq > 0, seq_lam, lam))     # bir sonraki adımın λ_norm'u
         self.h_t.copy_(h * self.enabled)                                     # bir sonraki adımın kapısı (dönüş için)
         self.g_fast.copy_(g_fast)                                            # bir sonraki adımın kapısı
         # 3. gecikmeli etiket
@@ -309,8 +419,14 @@ class _StreamV5:
             psi_old, x_old = None, None
         st = r_old / (r_old.pow(2).sum(-1, keepdim=True) + self.eps)         # [E, K, N]
         W_bar = self.W.mean(1) if self.plastic else None                     # [E, D, N] geri besleme (güncelleme öncesi)
-        self.W.sub_((self.alpha * m_old) * (self.W - self.W0))
+        if self.has_avec:                                                    # koşul başına α(t); dyn'de akış içi çapa
+            self.W.sub_((alpha_t * m_old).view(E, 1, 1, 1) * (self.W - (self.W_anc if self.has_dyn else self.W0)))
+        else:
+            self.W.sub_((self.alpha * m_old) * (self.W - self.W0))
         self.W.add_(self.eta_t.view(E, 1, 1, 1) * torch.einsum("ed,ekn->ekdn", err, st))
+        if self.has_dyn:                                                     # konsolidasyon, sonra valens / dominans
+            self.W_anc.add_((self.lam_c * cons_t * m_old).view(E, 1, 1, 1) * (self.W - self.W_anc))
+            self.dyn.update_valence(err.pow(2).mean(1) / self.q0, m_old)    # e_v(t) → bir sonraki adımın v, d'si
         if self.plastic:
             # ψ̄, x̃ izleri (t anı) — d = 0 ise güncelleme bu adımın izleriyle
             psi = 1.0 / (1.0 + bb.surrogate_scale * (bb.v - self.theta).abs()) ** 2   # [E, N]
@@ -337,14 +453,23 @@ class _StreamV5:
                 self.buf_x[j] = self.x_tr
         # 4. beyincik tahmini x̂_{t+1} (kapılanmamış izler, efference copy v̂_{t−1}; cer_src → izleme yolu)
         cer.forward(ro.traces.mean(0)[self.src], self.v_prev[self.src])
+        if self.has_dyn:                                                     # ortak sensör tahmini x̂_{t+1} (koşul 0)
+            self.phi_mon.copy_(torch.cat([ro.traces.mean(0)[0], self.v_prev[0]]))
+            self.x_hat_mon.copy_(self.w_mon @ self.phi_mon)
+            self.valid_mon.fill_(1.0)
         self.v_prev.copy_(v)
         self.rate.add_(mt * s)
         if self.homeo:
             dh = (1.0 - bb.rate_decay) * mt
             self.rate_ema.mul_(1.0 - dh).add_(dh * s)
             self.theta.add_(self.hlr * mt * (self.rate_ema - self.target)).clamp_(bb.theta_min, bb.theta_max)
+        if self.has_dyn:
+            dyn_out = (a_int.clone(), v_used, d_used, alpha_t.clone(), cons_t, u, brk, s_sens)
+        else:
+            z = self.zE
+            dyn_out = (z, z, z, alpha_t.clone(), z, z, z, s_sens)
         return (v, aff.a.clone(), self.eta_t.clone(), self.eta_in_t.clone(), lam_used, s_cer,
-                self.s_drift.expand(E).clone())
+                self.s_drift.expand(E).clone()) + dyn_out
 
 
 def _persistent(st: _StreamV5) -> list[torch.Tensor]:
@@ -360,11 +485,13 @@ def _set_persistent(st: _StreamV5, xs: list[torch.Tensor]) -> None:
 def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int, stop: int, burnin: int,
                     conds: list[Condition], cer: CerebellumV2, aff: AffectSpaceV2, plast: Plasticity, alpha_sm: float,
                     anchor_decay: float, eps: float, homeostasis: bool, chunk: int = 0, label_delay: int = 0,
-                    controls: Controls | None = None, drift: Drift | None = None) -> V5Result:
+                    controls: Controls | None = None, drift: Drift | None = None,
+                    dyn_base: DynBase | None = None) -> V5Result:
     """x: [n, C] x_norm, y: [n, D] standart hedef (cihazda). [start, stop) skorlanır; akış max(0, start − burnin)'de başlar.
 
     chunk > 0 ve CUDA → CUDA Graph parçaları (chunk, label_delay'in katı); aksi halde adım adım.
     drift: sapma terimi (`drift_w > 0` olan koşul varsa gerekli, KR-046).
+    dyn_base: dinamik duygu Day-0 tabanları (`dyn` koşulu varsa gerekli, KR-047).
     """
     model.eval()
     if not bool(model.readout.anchored):
@@ -379,18 +506,15 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
     total, Ls = stop - begin, stop - start
     E, D = len(conds), y.shape[1]
     st = _StreamV5(model, conds, cer, aff, plast, alpha_sm, anchor_decay, eps, homeostasis, d,
-                   controls or Controls(), Ls, dev, drift)
+                   controls or Controls(), Ls, dev, drift, dyn_base)
     model.reset_state(E)
-    # step çıktıları: v̂ [E, D], a, η, η_in, λ_norm, s_cer, s_drift [E]
-    outs = [torch.empty(E, total, D, device=dev)] + [torch.zeros(E, total, device=dev) for _ in range(6)]
+    # step çıktıları: v̂ [E, D], a, η, η_in, λ_norm, s_cer, s_drift, a_int, valens, dominans, α, c, u, fren, s_sens [E]
+    outs = [torch.empty(E, total, D, device=dev)] + [torch.zeros(E, total, device=dev) for _ in range(14)]
     mask = torch.zeros(total, device=dev)
     mask[start - begin:] = 1.0
-    seq_e = torch.zeros(E, total, device=dev)                                # dış dizi tüm akış boyunda (burn-in 0)
-    seq_i = torch.zeros(E, total, device=dev)
-    seq_l = torch.zeros(E, total, device=dev)
-    seq_e[:, start - begin:] = st.seq_eta
-    seq_i[:, start - begin:] = st.seq_eta_in
-    seq_l[:, start - begin:] = st.seq_lam
+    seqs = [torch.zeros(E, total, device=dev) for _ in range(5)]            # η, η_in, λ, α, c (burn-in 0)
+    for s_, src in zip(seqs, (st.seq_eta, st.seq_eta_in, st.seq_lam, st.seq_alpha, st.seq_cons)):
+        s_[:, start - begin:] = src
 
     def j_of(i: int) -> int:
         return i % d if d else 0
@@ -400,22 +524,20 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
         sx = torch.zeros(chunk, C, device=dev)
         sy = torch.zeros(chunk, D, device=dev)
         sm = torch.zeros(chunk, device=dev)
-        se = torch.zeros(E, chunk, device=dev)
-        si = torch.zeros(E, chunk, device=dev)
-        sl_ = torch.zeros(E, chunk, device=dev)
+        ss = [torch.zeros(E, chunk, device=dev) for _ in seqs]
         init = [t.clone() for t in _persistent(st)]
         _set_persistent(st, init)
         snap = _snapshot(st)
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):                                        # ısınma; ardından tüm durum geri alınır
-            st.step(sx[0:1], sy[0], sm[0], 0, se[:, 0], si[:, 0], sl_[:, 0])
+            st.step(sx[0:1], sy[0], sm[0], 0, *(s_[:, 0] for s_ in ss))
         torch.cuda.current_stream().wait_stream(side)
         _restore(st, snap)
         _set_persistent(st, init)
         g = torch.cuda.CUDAGraph()
         with torch.cuda.graph(g):
-            res = [st.step(sx[i: i + 1], sy[i], sm[i], j_of(i), se[:, i], si[:, i], sl_[:, i]) for i in range(chunk)]
+            res = [st.step(sx[i: i + 1], sy[i], sm[i], j_of(i), *(s_[:, i] for s_ in ss)) for i in range(chunk)]
             stk = [torch.stack([r_[k] for r_ in res], 1) for k in range(len(outs))]   # [E, chunk, ...]
         final = _persistent(st)
         n_full = total // chunk * chunk
@@ -423,9 +545,8 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
             sx.copy_(x[begin + c: begin + c + chunk])
             sy.copy_(y[begin + c: begin + c + chunk])
             sm.copy_(mask[c: c + chunk])
-            se.copy_(seq_e[:, c: c + chunk])
-            si.copy_(seq_i[:, c: c + chunk])
-            sl_.copy_(seq_l[:, c: c + chunk])
+            for b_, s_ in zip(ss, seqs):
+                b_.copy_(s_[:, c: c + chunk])
             g.replay()
             for o, s_ in zip(outs, stk):
                 o[:, c: c + chunk] = s_
@@ -438,22 +559,26 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
     else:
         rest = range(total)
     for i in rest:
-        r_ = st.step(x[begin + i: begin + i + 1], y[begin + i], mask[i], j_of(i), seq_e[:, i], seq_i[:, i], seq_l[:, i])
+        r_ = st.step(x[begin + i: begin + i + 1], y[begin + i], mask[i], j_of(i), *(s_[:, i] for s_ in seqs))
         for o, v_ in zip(outs, r_):
             o[:, i] = v_
 
     W, W0 = st.W, st.W0
     dw = (W - W0).flatten(1).norm(dim=1) / W0.flatten().norm()
     din = (st.Win - st.Win0).flatten(1).norm(dim=1) / st.win_norm
+    anc = (st.W_anc - W0).flatten(1).norm(dim=1) / W0.flatten().norm()
     model.reset_state(1)
     sl = slice(start - begin, None)
-    pred, a_o, eta_o, ein_o, lam_o, scer_o, sdr_o = (o[:, sl] for o in outs)
+    (pred, a_o, eta_o, ein_o, lam_o, scer_o, sdr_o, aint_o, val_o, dom_o, alp_o, cons_o, u_o, brk_o,
+     ssens_o) = (o[:, sl] for o in outs)
     return V5Result(pred, st.rate / Ls, dw, din, st.din_max.clone(), a_o, eta_o, ein_o, lam_o,
-                    {"theta": st.theta.clone(), "s_cer": scer_o, "s_drift": sdr_o})
+                    {"theta": st.theta.clone(), "s_cer": scer_o, "s_drift": sdr_o, "a_int": aint_o, "val": val_o,
+                     "dom": dom_o, "alpha": alp_o, "cons": cons_o, "u": u_o, "brake": brk_o, "s_sens": ssens_o,
+                     "anc_rel": anc})
 
 _MUTABLE = ("W", "Win", "din_max", "theta", "rate_ema", "rate", "x_bar", "x_tr", "psi_tr", "v_prev", "g_fast",
             "eta_t", "eta_in_t", "lam_t", "rm", "rv", "buf_r", "buf_v", "buf_y", "buf_m", "buf_psi", "buf_x",
-            "x_bar_raw", "s_drift", "h_t")
+            "x_bar_raw", "s_drift", "h_t", "W_anc", "phi_mon", "x_hat_mon", "valid_mon")
 
 
 def _snapshot(st: _StreamV5) -> dict[str, torch.Tensor]:
@@ -462,6 +587,8 @@ def _snapshot(st: _StreamV5) -> dict[str, torch.Tensor]:
         snap["cer_" + k] = getattr(st.cer, k).clone()
     for k in ("e_fast", "e_slow", "a"):
         snap["aff_" + k] = getattr(st.aff, k).clone()
+    for k in ("e_a", "q_f", "q_m", "q_d", "a", "v", "d"):
+        snap["dyn_" + k] = getattr(st.dyn, k).clone()
     if st.drift is not None:
         snap["drift_m"], snap["drift_v"] = st.drift.m.clone(), st.drift.v.clone()
     return snap
@@ -473,6 +600,8 @@ def _restore(st: _StreamV5, snap: dict[str, torch.Tensor]) -> None:
             getattr(st.cer, k[4:]).copy_(v)
         elif k.startswith("aff_"):
             getattr(st.aff, k[4:]).copy_(v)
+        elif k.startswith("dyn_"):
+            getattr(st.dyn, k[4:]).copy_(v)
         elif k.startswith("drift_"):
             getattr(st.drift, k[6:]).copy_(v)
         else:
@@ -505,3 +634,37 @@ def collect_cerebellum_data(model: V2Model, x: torch.Tensor, start: int, stop: i
     phi = torch.stack(phis)                                                  # φ(t)
     bar = torch.stack(bars)                                                  # x̄(t)
     return phi[:-1], bar[1:]
+
+
+@torch.no_grad()
+def collect_dyn_baseline(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int, stop: int,
+                         burnin: int) -> DynBase:
+    """Donuk model (çapa ağırlıkları W_0, b_0), [start, stop) aralığında (öncesinde burn-in) Day-0 tabanları (KR-047):
+    u_0 = ort. Var_k(v̂^(k)) (başlık uyuşmazlığı, D boyunca ortalama), q_0 = ort. (y − v̂)² (okuma hatası).
+
+    x: [n, C] x_norm, y: [n, D] standart hedef. Yalnızca train diliminde çağrılır (KV6)."""
+    model.eval()
+    ro = model.readout
+    begin = max(0, start - burnin)
+    model.reset_state(1)
+    us, qs = [], []
+    for t in range(begin, stop):
+        s = model.backbone.step(x[t: t + 1])                                 # [1, N]
+        ro.traces = ro.kappa * ro.traces + (1.0 - ro.kappa) * s.unsqueeze(0)   # [K, 1, N]
+        vk = torch.einsum("kbn,kdn->bkd", ro.traces, ro.w_anchor) + ro.b_anchor   # [1, K, D]
+        if t >= start:
+            us.append(vk.var(1, unbiased=False).mean())
+            qs.append((y[t] - vk.mean(1)[0]).pow(2).mean())
+    model.reset_state(1)
+    return DynBase(float(torch.stack(us).mean()), float(torch.stack(qs).mean()))
+
+
+def dyn_baseline_stream(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int, stop: int, burnin: int,
+                        cer: CerebellumV2, aff: AffectSpaceV2, plast: Plasticity, alpha_sm: float, eps: float,
+                        chunk: int = 0) -> DynBase:
+    """`collect_dyn_baseline` ile aynı tabanlar, akışla (CUDA Graph parçaları; uzun dilimde hızlı): donuk A ve η = 0'lı,
+    kapısız, yeniden ölçeklemesiz dyn yoklayıcı (W = W_0, g = 1). x: [n, C], y: [n, D] → DynBase."""
+    probe = Condition("U", dyn=DynSpec(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False, False, False, False))
+    res = stream_adapt_v5(model, x, y, start, stop, burnin, [Condition("A"), probe], cer, aff, plast, alpha_sm, 0.0, eps,
+                          False, chunk=chunk, dyn_base=DynBase(1.0, 1.0))
+    return DynBase(float(res.extra["u"][1].double().mean()), float((y[start:stop] - res.pred[0]).double().pow(2).mean()))

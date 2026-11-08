@@ -47,3 +47,65 @@ class AffectSpaceV2:
         eta = eta0 * (1.0 + alpha_eta * ap * enabled)
         eta_in = torch.where(enabled > 0, eta_in0 * ap, eta_in0)
         return g_fast, eta, eta_in
+
+
+class AffectDynamics:
+    """Dinamik duygu (KR-047): arousal düzey, valens eğilim, dominans düzey; gaz / fren / gevşetme / konsolidasyon.
+
+        E_a ← E_a + λ_a·(mix − E_a),  mix = (1 − w_u)·s_int + w_u·u      s_int: iç beyincik hatası / ε²_0, u: başlık
+        a   = tanh((E_a − 1)/(1 + ε))                                      uyuşmazlığı / u_0 (Day-0 tabanı 1, sabit)
+        Q_f, Q_m, Q_d ← EMA(q),  q = mean e_v² / q_0                       okuma hatası (gecikmeli etiket)
+        v   = tanh((Q_m − Q_f)/(Q_m + ε))                                  > 0: hata düşüyor (rahatlama)
+        d   = −tanh(ln(Q_d + ε))                                           0: Day-0 düzeyi, → −1: eski ağırlıklar çalışmıyor
+        b = v⁻·m (fren),  ℓ = a⁺·d⁻ (gevşetme),  c = v⁺·m (konsolidasyon),  m: son konsolidasyondan beri öğrenme ∈ [0, 1]
+        η = η_0·(1 + α_η·a⁺)·(1 − ρ_v·v⁺)·(1 − b),   α = α_0·(1 − ℓ) + α_b·b
+
+    a ve v farklı EMA'lardan gelir (a sabit Day-0 tabanına göre, v iki uyarlanan EMA'nın farkı): valens = −arousal
+    çöküşü olmaz. Koşul başına [E] durum, yerinde güncellenir (CUDA Graph); maske 0 iken durum ilerlemez.
+    Bayrak tensörleri (0/1): gas, brake, loosen, consolidate (ablasyonlar).
+    """
+
+    def __init__(self, w_u: torch.Tensor, lam_a: torch.Tensor, lam_f: torch.Tensor, lam_m: torch.Tensor,
+                 lam_d: torch.Tensor, eps: float) -> None:
+        """Hepsi [E]: başlık uyuşmazlığı ağırlığı ve EMA adımları (a: arousal; f, m: valens hızlı / orta; d: dominans)."""
+        self.w_u, self.lam_a, self.lam_f, self.lam_m, self.lam_d, self.eps = w_u, lam_a, lam_f, lam_m, lam_d, eps
+        E, dev = w_u.shape[0], w_u.device
+        self.e_a = torch.ones(E, device=dev)                                 # Day-0 tabanı = 1
+        self.q_f = torch.ones(E, device=dev)
+        self.q_m = torch.ones(E, device=dev)
+        self.q_d = torch.ones(E, device=dev)
+        self.a = torch.zeros(E, device=dev)
+        self.v = torch.zeros(E, device=dev)
+        self.d = torch.zeros(E, device=dev)
+
+    def update_arousal(self, s_int: torch.Tensor, u: torch.Tensor, mt: torch.Tensor) -> torch.Tensor:
+        """s_int, u: [E] Day-0 tabanına göre (taban 1); mt: [] maske → a: [E] (yerinde)."""
+        mix = (1.0 - self.w_u) * s_int + self.w_u * u
+        self.e_a.add_((self.lam_a * mt) * (mix - self.e_a))
+        self.a.copy_(torch.tanh((self.e_a - 1.0) / (1.0 + self.eps)))
+        return self.a
+
+    def update_valence(self, q: torch.Tensor, mt: torch.Tensor) -> None:
+        """q: [E] okuma hatası / q_0 (e_v(t) = y_{t−d} − v̂_{t−d}); mt: o etiketin maskesi. v, d bir sonraki adıma."""
+        self.q_f.add_((self.lam_f * mt) * (q - self.q_f))
+        self.q_m.add_((self.lam_m * mt) * (q - self.q_m))
+        self.q_d.add_((self.lam_d * mt) * (q - self.q_d))
+        self.v.copy_(torch.tanh((self.q_m - self.q_f) / (self.q_m + self.eps)))
+        self.d.copy_(-torch.tanh(torch.log(self.q_d + self.eps)))
+
+    @staticmethod
+    def controls(a: torch.Tensor, v: torch.Tensor, d: torch.Tensor, m: torch.Tensor, eta0: torch.Tensor,
+                 alpha_eta: torch.Tensor, rho_v: torch.Tensor, alpha0: torch.Tensor, alpha_b: torch.Tensor,
+                 gas: torch.Tensor, brake: torch.Tensor, loosen: torch.Tensor, consolidate: torch.Tensor,
+                 gas_dom: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Hepsi [E] → η [E] ∈ [0, η_0(1 + α_η)], α [E] ∈ [0, α_0 + α_b], fren b [E] ∈ [0, 1], konsolidasyon c [E] ∈ [0, 1].
+
+        gas_dom = 1 → gaz a⁺·d⁻ (yalnız eski ağırlıklar çalışmazken; model uyum sağlayınca kendiliğinden kapanır)."""
+        ap, vp, vn, dn = a.clamp(min=0.0), v.clamp(min=0.0), (-v).clamp(min=0.0), (-d).clamp(min=0.0)
+        b = vn * m * brake
+        ell = ap * dn * loosen
+        c = vp * m * consolidate
+        g_amt = ap if gas_dom is None else ap * torch.where(gas_dom > 0, dn, torch.ones_like(dn))
+        eta = eta0 * (1.0 + alpha_eta * g_amt * gas) * (1.0 - rho_v * vp).clamp(min=0.0) * (1.0 - b)
+        alpha = alpha0 * (1.0 - ell) + alpha_b * b
+        return eta, alpha, b, c

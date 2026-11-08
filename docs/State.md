@@ -2,8 +2,31 @@
 
 Her gün sonunda güncellenir. En yeni gün en üstte.
 
-**Şu an:** Spike v2, V0–V4 tamamlandı; sıradaki V5 (beyincik + duygu uzayı + duygu-kapılı W_in plastisitesi, KR-044). Oturum içi test R² Indy 0,754 / Loco 0,704 (donuk, ön-eğitimli); Day-0 modeli sonraki günlerde ≈ 0, okuma NLMS'i kurtarmıyor (KR-042).
-**Açık kararlar:** v2 — beyincik girdisi kapılanmış mı (V5, §12.10 nokta 4). Loco KV7 ihlali raporlanıyor. v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+**Şu an:** Spike v2, V0–V6 tamamlandı (KR-048). Günler arası test Day-k R² v2-D 0,279 (A −0,066, v2-B 0,039, R5 0,251); D > B ve D > P destekleniyor, D > C desteklenmiyor. Oturum içi Indy 0,750 / Loco 0,710.
+**Açık kararlar:** v2 — sensör tespit gecikmesi (Indy 0131) ve elektrot kaybında sensörlü kapı (R5'in gerisinde). Loco KV7 ihlali raporlanıyor. v1 — θ(τ) "geçici", `γ_rec` = 1.0.
+
+---
+
+## 2026-11-08 — Faz V5 kapanışı ve Faz V6 (KR-046–KR-048)
+
+**Yaptıklarım**
+- [x] Kalıcı sürpriz sensörü (ham hedefli donuk izleme beyinciği + girdi sapması, sabit Day-0 tabanı, eşikli kapı, dönüş; KR-046).
+- [x] Dinamik duygu: arousal / valens / dominans → gaz, fren, çapa gevşetme, konsolidasyon (`AffectDynamics`, KR-047); ortak sensör, akış içi çapa, eşlenmiş kontroller (v2-P, Bg, Pg), elektrot kaybı senaryosu, kesin Wilcoxon (`src/v2/stats.py`), `experiments/v2_v6.py`, `scripts/make_tables_v2.py`, `scripts/plot_v2_traces.py`; v2 + v1 değişmez testleri geçiyor.
+- [x] Teşhis: sabit η 3×'ün üstünde zararlı, 10× ıraksıyor; başlık uyuşmazlığı kaymada düşüyor, iç beyincik hatası günü ayırmıyor → arousal kaynağı val'de sensör seçildi; valens kontrolü ölçülü gazda zararlı.
+- [x] V6 test (seed 0–4):
+
+  | | Day-k | Tüm günler | Day-0 | Elektrot sonrası |
+  |---|---|---|---|---|
+  | v2-B | 0,039 | 0,284 | 0,773 | 0,545 |
+  | R5 | 0,251 | 0,413 | 0,738 | 0,652 |
+  | v2-C | 0,277 | 0,443 | 0,775 | 0,608 |
+  | v2-D | 0,279 | 0,444 | 0,775 | 0,604 |
+
+**Etkisi**
+- Duygu "ne zaman uyum sağla" anahtarı olarak işe yarıyor (D > B, P, Pg, Pm3; ilk gün korunuyor); gün içi zamanlama katkısız (D ≈ C).
+
+**Açık**
+- 0131 tespit gecikmesi; elektrot kaybında sensörlü kapı R5'in gerisinde.
 
 ---
 

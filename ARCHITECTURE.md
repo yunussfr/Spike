@@ -422,6 +422,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-08 | KV2, KV3, KV4, §12.6, §12.7, §12.9, §12.14: kalıcı sürpriz sensörü (yeniden ölçekleme kapısı); dinamik duygu: arousal (iç hata + başlık uyuşmazlığı, sabit Day-0 tabanı), valens (e_v eğilimi), dominans (e_v düzeyi) → gaz, fren, çapa gevşetme, akış içi çapa konsolidasyonu; yeni regülatörler α_anchor(t), c(t); yeni kontrol v2-P, v2-B ᾱ ile eşlenir, v2-C η, α, c dizilerini karıştırır; v2-E senaryosu tanımlandı | KR-046: kapalı döngü sönüyordu; kalıcı sensör ilk günü korudu. KR-047: Pf ≈ sabit yüksek η (duygu zamanlaması katkısız); valence = −a iken kurallar tek sinyale çöküyordu. Kullanıcı önerisi ve onayı (valens / dominans e_v'den) |
 | 2026-11-08 | KV4, KV6, §12.6, §12.9, §12.14: duygu-kapılı etiketsiz kanal yeniden ölçeklemesi ana sisteme girdi; yeni regülatör λ_norm(t); koşul v2-R. W_in kuralı (§12.13) varsayılan kapalı | KR-045: etiketsiz yeniden ölçekleme günler arası val R² ≈ 0 → ~0,19 ama Day-0'da bedelli; W_in kuralı okuma uyumunu geçmedi (karar kapısı 2). Kullanıcı seçimi |
 | 2026-11-08 | KV1–KV7, §12.1, §12.6, §12.9, §12.13: W_in çevrimiçi, sürpriz-kapılı (η_in = η_in,0·max(0, a)), çapalı ve norm topu sınırlı üç faktörlü yerel kuralla değişebilir; W_rec ve τ donuk. Yeni koşullar v2-W, v2-L; homeostaz hedefi `day0` seçeneği, v2-L'de akan kanal z-skoru | KR-042: günler arası Day-0 modeli ≈ 0, okuma NLMS'i kurtarmıyor (kayma girişte). Kullanıcı önerisi ve onayı (KR-044) |
 | 2026-11-07 | §12.8 Aşama 3: çevrimiçi etiket 500 ms gecikmeli; günler arası model yalnızca Day-0'da eğitilir | KR-041: anında etiketle y_{t−1} kopyası R² 0,999 (uyum kazancı sızıntıya yakın). KR-040: ön-eğitim Day-k train dağılımını görüyordu |
@@ -466,7 +467,7 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 - **İstisna — W_in (yalnızca `plif`):** `plasticity.enabled: true` ise W_in §12.13'teki duygu-kapılı yerel üç faktörlü kuralla değişebilir. Kural Day-0 değerine çapalıdır ve ‖W_in − W_in,0‖_F ≤ δ_max·‖W_in,0‖_F norm topuna izdüşürülür. Akış bitince W_in,0 geri yüklenir. `plasticity.enabled: false` → W_in tamamen donuk (V4 davranışı). Gerekçe: kayma girişte (elektrot / kanal ölçeği); okuma uyumu tek başına telafi edemiyor (KR-042). W_rec donuk: öğrenilen hareket dinamiği günler arası kararlı varsayılır.
 - Çevrimiçi değişebilen tek omurga durumu homeostatik eşiktir: `ϑ_i ← clip(ϑ_i + η_homeo·(r̄_i − ρ), ϑ_min, ϑ_max)`. Etiketsiz, nöron başına yerel ve nedenseldir (v1 KR-030 nedensel homeostatik normalizasyonunun karşılığı).
 
-**KV2 — Çevrimiçi öğrenme yereldir.** Aşama 3'te gradyan, BPTT ya da optimizer yoktur. Yalnızca açık formüllü kurallar çalışır: beyincik NLMS'i (§12.5), çapalı okuma NLMS'i (§12.7), homeostatik eşik (KV1), W_in üç faktörlü kuralı (§12.13: ön-sinaptik iz × nöronun surrogate türevi ψ × okuma ağırlıklarıyla yayınlanan gecikmeli hata; e-prop ailesi yaklaşık kural). Çevrimdışı aşamalarda gradyan serbesttir (K2, KR-033'te kaldırıldı).
+**KV2 — Çevrimiçi öğrenme yereldir.** Aşama 3'te gradyan, BPTT ya da optimizer yoktur. Yalnızca açık formüllü kurallar çalışır: beyincik NLMS'i (§12.5), çapalı okuma NLMS'i ve akış içi çapa konsolidasyonu (§12.7, KR-047), homeostatik eşik (KV1), W_in üç faktörlü kuralı (§12.13: ön-sinaptik iz × nöronun surrogate türevi ψ × okuma ağırlıklarıyla yayınlanan gecikmeli hata; e-prop ailesi yaklaşık kural). Çevrimdışı aşamalarda gradyan serbesttir (K2, KR-033'te kaldırıldı).
 
 **KV3 — Öğrenme sinyalleri karışmaz.**
 | Sinyal | Tanım | Kimi eğitir |
@@ -474,14 +475,17 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 | **e_v** (sonuç hatası, v1'deki δ) | v(t) − v̂(t) | Çevrimiçi: okuma başlıkları ve (plastisite açıksa) W_in, sabit geri besleme B = okuma ağırlıkları üzerinden (§12.13). Çevrimdışı: omurga + başlıklar (hız kaybı) |
 | **e_cer** (tahmin hatası, v1'deki e) | x̄(t+1) − x̂_smooth(t+1) | Yalnızca W_cer |
 - Beyincik kaybı omurgaya gradyan vermez; e_cer W_in'e ulaşmaz. Duygu uzayı e_cer'i yalnızca **okur**, değiştirmez; W_in'e yalnızca η_in(t) üzerinden, adım boyu olarak etki eder.
+- Dinamik duygu (KR-047, §12.6): duygu uzayı e_cer'i (iç yol ve izleme yolu), girdi sapmasını (§12.14), okuma başlıklarının çıktılarını (uyuşmazlık) ve gecikmeli e_v'yi **okur**; hiçbirini eğitmez. Okumaya yalnızca η(t), α_anchor(t), c(t) ve g üzerinden, adım boyu / kazanç olarak etki eder.
 
-**KV4 — Regülatörler yalnızca okuma kapılama kazançlarını, η'yı, η_in'i ve λ_norm'u üretir.**
+**KV4 — Regülatörler yalnızca okuma kapılama kazançlarını, η'yı, η_in'i, λ_norm'u, α_anchor'u ve konsolidasyon adımını üretir.**
 | Regülatör | Etkilediği yer | Aralık | Varsayılan |
 |---|---|---|---|
 | g_fast, g_slow | Okuma izlerinin hızlı / yavaş yarısı (§12.7) | [1 − α_gate, 1 + α_gate] ⊂ [0,5; 2] | 1 |
-| η(t) | Okuma başlıklarının çevrimiçi NLMS adımı | [η_0, η_0·(1 + α_η)] ⊂ [1e-4; 1e-1] | η_0 |
+| η(t) | Okuma başlıklarının çevrimiçi NLMS adımı | [η_0, η_0·(1 + α_η)] ⊂ [1e-4; 1e-1]; dinamik duyguda [0, η_0·(1 + α_η)] (fren η'yı 0'a çekebilir) | η_0 |
 | η_in(t) | W_in üç faktörlü kuralın adımı (§12.13) | [0, η_in,0] | 0 (sakinken W_in yalnızca çapaya döner) |
 | λ_norm(t) | Etiketsiz kanal yeniden ölçeklemesinin EMA adımı (§12.14) | [λ_calm, λ_surp] | λ_calm (sakinken neredeyse donuk) |
+| α_anchor(t) | Okuma NLMS'inin çapaya çekme adımı (§12.7, KR-047) | [0, α_0 + α_b] | α_0 |
+| c(t) | Akış içi çapanın konsolidasyon adımı: W_anc ← W_anc + λ_c·c·(W − W_anc) (§12.7, KR-047) | [0, 1] | 0 (çapa W_0) |
 - τ, ϑ, W_rec, beyincik adımı ve başka hiçbir hiperparametre regülatörden etkilenmez. β (karar sıcaklığı) regresyonda kullanılmaz.
 
 **KV5 — Regülatörsüz mod her zaman çalışır.** `regulators.enabled: false` → g_fast = g_slow = 1, η ve η_in sabit (v2-A'da 0, v2-B'de η̄ ve η_in = 0, v2-W'de η̄ ve η̄_in). Ablation için zorunludur ve testlidir.
@@ -556,7 +560,25 @@ g_fast     = 1 + α_gate·a(t),   g_slow = 1 − α_gate·a(t)          # α_gat
 ```
 - Duygu uzayı öğrenmez: sabit kuraldır, yalnızca durumunu ilerletir. Durum yeni akışta sıfırlanır.
 - v1'in z / üç baş / E-M-R / perturbasyonla öğrenilen W_r yapısı (§3.4–§3.5) v2'de yoktur. Gerekirse sonraki bir v2 fazında ayrı kararla geri eklenir.
-- valence ve dominance yalnızca loglanır; regülatörlere girmez.
+- Yukarıdaki biçimde valence = −a'dır ve dominance yalnızca loglanır. Dinamik duyguda (aşağıda) üçü ayrı sinyallerdir ve regülatörlere girer.
+
+**Dinamik duygu (KR-047, `AffectDynamics`).** Yukarıdaki biçimde valence = −a olduğu için "hata düşüyor" ile "sürpriz düşük" aynı sinyaldi. Dinamik duyguda arousal bir *düzey* (sabit Day-0 tabanına göre), valens bir *eğilim* (iki uyarlanan EMA'nın farkı), dominans okuma hatasının *düzeyi*dir:
+```
+s_int = mean e_cer,iç² / ε²_0                       # iç yol: koşulun kendi izleri, hedef yeniden ölçeklenmiş x̄' (§12.14)
+u     = Var_k(v̂^(k)) / u_0                          # 5 başlığın uyuşmazlığı; u_0: Day-0 train sonundaki ayrılmış dilim
+E_a  ← E_a + λ_a·((1 − w_u)·s_int + w_u·u − E_a);   a = tanh(E_a − 1)            # Day-0 tabanı 1, sabit
+q     = mean(e_v²) / q_0                            # gecikmeli okuma hatası; q_0: aynı dilimde donuk modelin hatası
+Q_f, Q_m, Q_d ← EMA_{λ_f, λ_m, λ_d}(q)  (λ_m < λ_f);  v = tanh((Q_m − Q_f)/(Q_m + ε));  d = −tanh(ln Q_d)
+m     = clamp(‖W − W_anc‖_F / (δ_m·‖W_0‖_F), 0, 1)  # son konsolidasyondan beri öğrenme
+b = v⁻·m (fren)   ℓ = a⁺·d⁻ (gevşetme)   c = v⁺·m (konsolidasyon)
+η(t)  = η_0·(1 + α_η·a⁺)·(1 − ρ_v·v⁺)·(1 − b)     # gaz · rahatlamada kısma · fren
+α(t)  = α_0·(1 − ℓ) + α_b·b                        # yeni günde gevşet, frende geri çek
+g_fast = 1 + α_gate·a
+```
+- Döngü: yeni gün (a yüksek, d düşük) → çapa gevşek, η açık → rahatlama (v > 0) → W_anc öğrenilen ağırlığa taşınır, η kısılır → ΔW hatayı artırırsa (v < 0, m > 0) son iyi ağırlığa (W_anc) geri çekilir. "Hata artıyor → fren" yalnız m > 0 iken çalışır; yeni günün başında (W ≈ W_anc) fren yoktur.
+- Valens ve dominans e_v(t) ile güncellenir ve bir sonraki adıma uygulanır (prequential, KV6). Yeniden ölçekleme kapısı bu arousal'dan değil, §12.14'teki sensörden gelir.
+- Kontrolü süren arousal seçilebilir (`DynSpec.a_mode`): iç (yukarıdaki a), sensör (§12.14'teki kalıcı sürprizin a_s'si) ya da ikisinin maksimumu. u_0 ve q_0 Day-0 val diliminden (donuk model; train sonu fazla iyimser, KR-047).
+- **Val seçimi (KR-047, v2-D):** arousal = sensör a_s (iç a günü ayırmıyor: başlık uyuşmazlığı kaymada düşüyor); gaz α_η = 2; gevşetme açık; g açık; fren, konsolidasyon ve rahatlamada kısma kapalı (ölçülü gazda zararlı ya da nötr; fren yalnız 10·η_0 gazda koruyor). Bu seçimde v2-D: η = η_0(1 + 2·a_s⁺), α = α_0(1 − a_s⁺·d⁻), g_fast = 1 + α_gate·a_s.
 
 ### 12.7 Karar bloğu v2 (`MultiHeadDecisionBlock`)
 ```
@@ -570,6 +592,7 @@ W^(k) ← (1 − α_anchor)·W^(k) + α_anchor·W_0^(k) + η(t)·e_v(t)·r̃^(k)
 ```
 - v1 Faz 6'daki W_base + ΔW elastik çapasıyla (§3.6) aynı ilkedir. Fark: çapa doğrudan W_0'a çeker ve normalizasyon başlık başınadır.
 - Çevrimdışı aşamalarda başlıklar omurgayla birlikte gradyanla eğitilir.
+- **Dinamik duyguda (KR-047):** çapa akış içi W_anc^(k)'dır ve adımı α(t)'dir: W^(k) ← W^(k) − α(t)·(W^(k) − W_anc^(k)) + η(t)·e_v·r̃ᵀ/(‖r̃‖² + ε); ardından W_anc^(k) ← W_anc^(k) + λ_c·c(t)·(W^(k) − W_anc^(k)). W_anc akış başında W_0'dır; akış sonunda modelin W_0'ı değişmemiş olur (akış durumu).
 
 ### 12.8 Eğitim protokolü
 1. **Aşama 1 — Çoklu oturum ön-eğitimi** (primat başına): her oturumun train dilimi 2 s pencerelere bölünür (Δt = 4 ms → 500 adım, stride 250) ve birleştirilir. Batch 32, AdamW (lr 1e-3, wd 1e-4), CosineAnnealing, 100 epoch.
@@ -585,17 +608,18 @@ v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
 | Kod | İçerik | Ölçtüğü |
 |---|---|---|
 | **v2-A** | Donuk model, η = 0 | Ön-eğitim + ince ayarın kendisi |
-| **v2-B** | Çapalı NLMS, η = v2-D'nin η̄'sı (eşlenmiş), g = 1 | Temel çevrimiçi uyum (birincil adil kontrol) |
-| **v2-C** | v2-D'nin η(t), η_in(t) ve λ_norm(t) dizileri zamanda karıştırılmış | Kazanç zamanlamadan mı, varyanstan mı geliyor |
+| **v2-B** | Çapalı NLMS, η = v2-D'nin η̄'sı ve α = ᾱ'sı (eşlenmiş), g = 1 | Temel çevrimiçi uyum (birincil adil kontrol) |
+| **v2-P** | v2-D ile aynı sensörlü yeniden ölçekleme (§12.14) + eşlenmiş sabit η̄, ᾱ; duygu okumaya girmez (KR-047) | Duygunun okuma zamanlamasının katkısı (kilit kontrol) |
+| **v2-C** | v2-D'nin η(t), α(t) ve c(t) dizileri zamanda karıştırılmış; yeniden ölçekleme D ile aynı sensörden (KR-047). Önceki biçim: η(t), η_in(t), λ_norm(t) | Kazanç zamanlamadan mı, varyanstan mı geliyor |
 | **v2-W** | v2-B + W_in kuralı, sabit η_in (v2-D'nin η̄_in'i, eşlenmiş), duygu yok | W_in plastisitesinin kendisi; duygu kapısının kontrolü |
-| **v2-D** | Tam sistem: sürpriz modülasyonlu λ_norm(t) (duygu-kapılı yeniden ölçekleme, KR-045) ve η(t) + g_fast/g_slow + çapalı NLMS (+ ops. W_in kuralı, homeostaz) | Önerilen yöntem |
+| **v2-D** | Tam sistem: sensörlü yeniden ölçekleme (§12.14, KR-046) + dinamik duygu (§12.6, KR-047): η(t), α(t), konsolidasyon c(t), g_fast/g_slow + çapalı NLMS (+ ops. W_in kuralı, homeostaz) | Önerilen yöntem |
 | **v2-R** | v2-B + sabit hızlı yeniden ölçekleme (λ̄_norm = v2-D'nin ortalaması, eşlenmiş; ayrıca sabit τ = 5 / 30 s) | Duygu kapısının yeniden ölçeklemeye katkısı |
 | **v2-L** | Etiketsiz kontrol: Day-0 hedefli homeostaz ve/veya akan kanal z-skoru, η = 0 | Kaymanın ne kadarı yalnızca ölçek? |
 | **v2-E** | Akış ortasında rastgele 20 giriş kanalı sıfırlanır; A, B, D üzerinde | Toparlanma süresi |
 
-- Senaryolar: oturum içi test ve Day-0 → Day-k (günler arası).
-- Metrikler: R² (NeuroBench), toparlanma süresi (E), alt-popülasyon ateşleme oranı (KV7), a(t)/g/η izleri.
-- **Ana iddianın kanıtı:** v2-D'nin v2-B, v2-W ve v2-C'den istatistiksel olarak anlamlı biçimde iyi olması (5 seed, Wilcoxon). v1'de kapılı η eşlenmiş η'yı geçemedi (KR-031, KR-032); bu yüzden B ve C kontrolleri zorunludur.
+- Senaryolar: oturum içi test, Day-0 → Day-k (günler arası) ve elektrot kaybı (v2-E: oturum içi model, değerlendirme diliminin ortasında seed'e bağlı 20 kanalın ham sayımı 0).
+- Metrikler: R² (NeuroBench), kayıp sonrası R² ve toparlanma süresi (E: kayıptan sonraki ilk 5 s'lik pencerenin R²'si ≥ kayıp öncesi pencere medyanı − 0,05), alt-popülasyon ateşleme oranı (KV7), a(t)/v(t)/d(t)/g/η/α izleri.
+- **Ana iddianın kanıtı:** v2-D'nin v2-B, v2-P ve v2-C'den istatistiksel olarak anlamlı biçimde iyi olması (5 seed × oturum, kesin Wilcoxon, Holm). v1'de kapılı η eşlenmiş η'yı geçemedi (KR-031, KR-032); bu yüzden B ve C kontrolleri zorunludur. v2-W V6 dışında: W_in kuralı kapı 2'de okuma uyumunu geçmedi (KR-045).
 
 ### 12.10 Spesifikasyon notları ve açık noktalar
 Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt için; v2 kararlarını değiştirmez):
@@ -629,7 +653,10 @@ Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt 
 | τ_read | {16, 32, 64, 100, 160} ms |
 | α_anchor | 1e-4 |
 | a_f, a_s | 0,05, 0,001 |
-| α_gate, α_η, η_0 | 0,25, 2, 5e-4 |
+| α_gate, α_η, η_0 | 0,25, 2, 5e-4 (V5/V6: η_0 = 1,5e-3, KR-046) |
+| Kalıcı sürpriz sensörü (§12.14) | τ_d 10 s, v_f 1e-2, δ_0 = Day-0 train maks.; τ_fast 5 s; kapı [0,3; 0,6]; τ_calm ∞, τ_surp 5 s; τ_ret 30 s |
+| Dinamik duygu (§12.6, KR-047) | a_mode = sensör; τ_a 5 s, w_u 0,5; valens τ 2 s / 20 s, dominans τ 20 s; ρ_v 0; τ_brake 2 s, τ_cons 5 s, δ_m 0,2 (fren ve konsolidasyon v2-D'de kapalı) |
+| Elektrot kaybı (v2-E) | 20 kanal, değerlendirme diliminin ortası; toparlanma penceresi 5 s, adım 0,5 s, tol 0,05 |
 | Pencere / stride | 500 / 250 adım |
 | Ön-eğitim / ince ayar | 100 / 150 epoch, batch 32, AdamW 1e-3, wd 1e-4 |
 
@@ -680,3 +707,17 @@ x'(t) = m_0 + (x(t) − m(t))·√(v_0 / (v(t) + ε))                    # Day-0
 - Beyincik hedefi x̄ yeniden ölçeklenmiş x'ten hesaplanır: ölçek geri döndükçe e_cer ve sürpriz söner, yeniden ölçekleme yavaşlar (kapalı döngü).
 - Sakinken (a ≤ 0) τ = τ_calm (uzun): Day-0'da sabit hızlı yeniden ölçeklemenin bedeli (val'de −0,01…−0,05) kalkmalı. Sürprizde τ → τ_surp (kısa).
 - Etiket kullanmaz; KV6'nın tek istisnasıdır. Parametreler `renorm.*` (τ_calm, τ_surp, ε) YAML'dan, yalnızca ayar seed'leri + val ile.
+- **Durum (KR-046):** yukarıdaki kapalı döngü söner (ölçek düzelince sürpriz ve hız düşer); eşlenmiş sabiti geçmedi. Yerine kalıcı sürpriz sensörü:
+
+**Kalıcı sürpriz sensörü (KR-046, `persist` config; v2-D ve v2-P'de):**
+```
+s_mon(t) = mean (x̄_ham(t) − W_cer,0·φ_A(t−1))² / ε²_0    # izleme yolu: A'nın izleri, ham (yeniden ölçeklenmemiş) hedef, donuk W_cer
+m_d ← m_d + λ_d·(x − m_d);  v_d ← v_d + λ_d·((x − m_d)² − v_d)            # kanal EMA'sı, ham x_norm, τ_d 10 s
+δ(t) = mean_c ½·[ρ − 1 − ln ρ + (m_d − m_0)²/v_0'],  ρ = max(v_d, v_f)/v_0',  v_0' = max(v_0, v_f)   # Day-0 train'e Gauss KL
+ε²(t) = max(s_mon, δ/δ_0)                                   # δ_0: Day-0 train boyunca en büyük δ (tolerans zarfı)
+E_s  ← E_s + λ_s·(ε² − E_s);   a_s = tanh(E_s − 1)          # E_slow Day-0 tabanında (1) sabit, τ_fast 5 s
+h = clamp((a_s − lo)/(hi − lo), 0, 1);   λ_norm = λ_calm + (λ_surp − λ_calm)·h        # lo 0,3, hi 0,6; τ_calm = ∞, τ_surp = 5 s
+m, v ← m, v + λ_ret·(1 − h)·((m_0, v_0) − (m, v))          # sakinken Day-0 referansına dönüş, τ_ret 30 s
+```
+- Sensör koşulun kendi yeniden ölçeklemesinden bağımsızdır (geri besleme döngüsü yok) ve tüm dinamik duygu koşulları için ortaktır.
+- Ölü kanalda (elektrot kaybı) v → 0 olur ve x' kanalın Day-0 ortalamasına iner (sonlu; test edildi).

@@ -733,6 +733,96 @@ Her kayıt:
 - **Kapı 2, W_in kuralı** (seed 100, val, Day-k ortalaması): Loco B 0,044; W η_in 0,1 / 1 / 10: 0,048 / −0,22 / −0,93; Indy 0131 B 0,07, W 0,1 0,15, W 1 −0,12. 500 ms gecikmeli, okuma ağırlıklarıyla yayınlanan hata girişi yeniden eşlemek için fazla gürültülü. Duygu kapısı korumada işe yarıyor (η_in 10, Day-0: W 0,39, D 0,65) ama Day-k'de kazanç yok.
 - **Karar (kullanıcı, 2026-11-08):** duygunun açtığı giriş uyumu etiketsiz kanal yeniden ölçeklemesinin hızı olur (§12.14): λ_norm(t) = λ_calm + (λ_surp − λ_calm)·max(0, a). KV4'e λ_norm regülatörü, KV6'ya istisna eklendi. W_in kuralı varsayılan kapalı. Yeni kontrol v2-R (eşlenmiş sabit hızlı yeniden ölçekleme); v2-C λ_norm dizisini de karıştırır.
 
+### KR-046 — Karar kapısı 3: kapalı döngü söner → kalıcı sürpriz sensörü (kullanıcı önerisi)
+- **Kapı 3** (`runs/20261108-111118_v2_v5_val_seeds100-101-102`, ayar seed'leri, val, η_0 = 5e-4): duygu-kapılı kapalı döngü (beyincik hedefi yeniden ölçeklenmiş x̄, uyarlanan E_slow) eşlenmiş sabiti ve karıştırılmışı geçmedi. Day-k: G60/10 0,107, Rm60/10 0,116, Cg60/10 0,111; R5 0,180. Sebep: ölçek düzeldikçe beyincik hatası ve sürpriz söner, yeniden ölçekleme yavaşlar (kendini kapatan döngü); uyarlanan E_slow yeni günü kısa sürede "normal" sayar.
+- **Öneri (kullanıcı, 2026-11-08):** beyincik hedefi ham (Day-0 z-skorlu) girdi ve W_cer çevrimiçi donuk; E_slow tabanı Day-0'da sabit ve sürprize kanal ortalama / varyans sapması eklensin; ölçekleme hızı arousal ile kapılansın (düşükken donuk, yüksekken R5).
+- **Uygulama (§12.14, `persist` config):** sensör = A'nın yolundan (izleme yolu) ham hedefli, donuk Day-0 beyinciği + girdi sapması δ(t) (kanal EMA ortalaması / varyansı, τ_d 10 s, Day-0 train'e Gauss KL). Birleşim ε² = max(s_cer, δ/δ_0); E_fast τ 5 s, taban 1 sabit. Kapı h = clamp((a − 0,3)/0,3, 0, 1); λ_norm τ = ∞ (sakin) → 5 s (h = 1). Sakinken (1 − h) oranında τ 30 s ile Day-0 referansına dönüş.
+- **Teşhisler:** δ_0 = Day-0 train'in son 120 s ortalamasıyken Day-0 val tabanın 1,7–2,7 katıydı (kapı ilk günde %26–64 açık) → δ_0 = Day-0 train boyunca en büyük δ (tolerans zarfı): Day-0 val zarfın 0,12–0,43 katı, Day-k 1,5–16 katı. Dönüş olmadan ilk gündeki kısa açılmalar kaymayı kalıcı yapıyordu (Indy Day-0 0,754; dönüşle 0,775).
+- **Sonuç** (`runs/20261108-144719_v2_v5_val_seeds100-101-102`, η_0 = 1,5e-3, ayar seed'leri, val, iki primat):
+
+  | Koşul | Day-k | Day-0 | Tüm günler | Oturum içi |
+  |---|---|---|---|---|
+  | B | 0,020 | 0,743 | 0,261 | 0,708 |
+  | R5 | 0,201 | 0,707 | 0,370 | 0,685 |
+  | R30 | 0,165 | 0,719 | 0,350 | 0,709 |
+  | Pm (sensör) | 0,167 | 0,744 | 0,359 | 0,713 |
+  | Pf (Pm + g, η(t)) | 0,191 | 0,744 | 0,375 | 0,716 |
+  | O (gün bilgisiyle üst sınır) | 0,201 | 0,744 | 0,382 | 0,707 |
+
+- **Kapı davranışı:** Day-0'da %1–3 açık (≈ 130. s, tüm seed'lerde aynı an); Loco Day-k 1. s'de, tüm gün; Indy 0630 5. s (%97); 0131 31. s (%62). Yalnız beyincik 0131'i hiç yakalamıyor (s_cer 0,96 ≈ Day-0 0,94): hatası hızlı dalgalanmalarca baskın, ılımlı ölçek kaymasını görmüyor.
+- **Ayrıştırma** (`runs/20261108-140542_…`, `runs/20261108-143041_…`, η_0 = 5e-4): Pm − yalnız sapma +0,002; izleme yolu − kendi yolu +0,001 (geri besleme döngüsü yok). Pf − Pm +0,023 (12/12), ama duygusuz sabit 3·η_0 − Pm +0,019 (12/12) ve Pf − sabit 3·η_0 +0,004 → Pf'nin kazancı η'nın zamanlamasından değil düzeyinden.
+- **Geç pencere** (`runs/20261108-150112_…`, her dilimin ilk 35 s'si atılmış): tüm günler Pm 0,385, R5 0,377, O 0,389; 0131 Pm 0,498, R5 0,526. Kayıp tespit gecikmesinden: 0131 val dilimi 83 s, gecikme 31 s.
+- **Karar:** duygu "bugün Day-0 değil" algılayıcısı olarak çalışıyor: ilk günü koruyor (Pm − R5 Day-0 +0,037, 6/6), Day-k'nin çoğunda üst sınıra eşit; kısa dilim protokolünde tüm günlerde R5'in −0,011 gerisinde (10/18). Pm, V5 kapanışı ve V6'da yeniden ölçekleme sensörü olarak kalır. Okuma tarafındaki duygu etkisi (Pf ≈ sabit yüksek η) KR-047'de yeniden tasarlandı.
+
+### KR-047 — Dinamik duygu: gaz, fren, çapa gevşetme ve konsolidasyon (kullanıcı önerisi)
+- **Bağlam:** kalıcı sürpriz yalnız açılıyor, hiç kapanmıyor; η'yı modüle eden Pf sabit 3·η_0 ile aynı (KR-046). Kullanıcı önerisi (2026-11-08): (1) arousal iç (yeniden ölçeklenmiş) beyincik hatası ve 5 başlığın uyuşmazlığından; (2) valens hatanın türevi: hata düşüyorsa η yavaşça kısılsın, ΔW ile hata artıyorsa fren (η → 0, çapa sıkılaşsın); (3) arousal yüksek ve dominans düşükken çapa gevşesin, rahatlamada çapa yeni ağırlıklara taşınsın (konsolidasyon).
+- **Tasarım (onaylı plan, teşhis tablosuyla; ARCHITECTURE.md §12.6, §12.7):**
+  - Valens ve dominans 500 ms gecikmeli okuma hatası e_v'den (kullanıcı seçimi); arousal etiketsiz.
+  - Yazıldığı gibi valens = −arousal oluyordu (aynı E_fast / E_slow): arousal düzey (sabit Day-0 tabanı), valens eğilim (iki uyarlanan EMA'nın farkı), dominans e_v düzeyi yapıldı.
+  - "Hata artıyor → fren" yeni günün başında da tetiklenirdi: fren ve konsolidasyon son konsolidasyondan beri öğrenmeyle (m = ‖W − W_anc‖ / (δ_m‖W_0‖)) çarpılır; W ≈ W_anc iken çalışmaz.
+  - η = η_0(1 + α_η·a⁺)(1 − ρ_v·v⁺)(1 − b), α = α_0(1 − a⁺·d⁻) + α_b·b, W_anc ← W_anc + λ_c·v⁺·m·(W − W_anc).
+- **Teşhis 1b: sabit η taraması** (`runs/20261108-165735_v2_v5_val_seeds100-101-102`, Pm, η_0 = 1,5e-3, ayar seed'leri, val): 1× / 3× / 10× η_0 → Day-k 0,167 / 0,180 / −0,346, Day-0 0,744 / 0,735 / 0,662, oturum içi 0,713 / 0,709 / 0,632; 30× ıraksıyor (NaN). Gecikmeli NLMS 3×'in üstünde kararsız; 3× sonraki günlerde kazandırıp ilk günde kaybettiriyor → η'yı yalnız gerektiğinde açmak için alan var.
+- **Teşhis 1a: arousal kaynakları** (seed 100, val, donuk okuma): başlık uyuşmazlığı u (Day-0 tabanına göre) ilk günde ort. 0,49–0,56 (medyan 0,01–0,02), sonraki günlerde 0,01–0,22; el hızıyla r = 0,76–0,81. Yeni günde model hızı çözemiyor ve başlıklar aynı sabite yakın çıktı veriyor: u kaymada **düşüyor**, hareketi gösteriyor. İç beyincik hatası her yerde Day-0'ın 0,83–1,07 katı (yeniden ölçekleme girdiyi normal gösteriyor). Okuma hatası q ise sonraki günlerde ilk günün 3–9 katı.
+- **Taban düzeltmesi:** q_0 Day-0 train sonundan alınınca ilk gün val hatası tabanın ~5 katıydı (model train'e fazla uyuyor) ve dominans her yerde doyuyordu → u_0, q_0 Day-0 val diliminden (oturum içinde kendi val'i; donuk model; `v6.baseline_split: val`). Test koşularında test diliminden ayrı; val ayarında değerlendirilen dilimle aynı (yalnız iki skaler).
+- **Arousal kaynağı (ayar):** teşhis 1a'ya göre kullanıcının tanımı (internal) günü ayırmıyor; kalıcı sensör (sensor) ve ikisinin maksimumu val'de karşılaştırıldı (`DynSpec.a_mode`). Ayrıca "gaz yalnız dominans düşükken" seçeneği (`gas_dom`: gaz a⁺·d⁻).
+- **Ayar 1** (`runs/20261108-173151_v2_v6_val_seeds100-101-102`, ayar seed'leri, val; tüm günler / Day-k / Day-0): kullanıcının tanımı D 0,346 / 0,147 / 0,742 (a⁺ Day-0 0,18, Day-k 0,00: ters); sensör arousal'ı Ds 0,370 / 0,182 / 0,746 (a⁺ 0,05 / 0,85; dominans +0,14 / −0,66); maks. Dx = Ds; gas_dom fark yok; valenssiz Ds_nv **0,397 / 0,224 / 0,744**. Valens τ 2 s / 20 s ile uzanma hareketlerinin gürültüsünü izliyor (±0,75 salınım; q çarpık olduğu için ilk günde bile ort. +0,2); fren yeni günde öğrenmeyi eski çapaya geri çekiyor (Indy 0630: Ds 0,025, Ds_nv 0,144).
+- **Ayar 2** (`runs/20261108-181814_v2_v6_val_seeds100-101-102`; taban Dn = sensör arousal'ı, gaz α_η = 2, çapa gevşetme, g, valens kontrolü yok; tüm günler):
+
+  | Varyant | Tüm günler | Day-k | Dn − varyant (Wilcoxon, n = 18) |
+  |---|---|---|---|
+  | **Dn** | **0,397** | **0,224** | — |
+  | gevşetmesiz | 0,375 | 0,191 | +0,022 (15/18, p = 0,001) |
+  | gazsız | 0,383 | 0,203 | +0,014 (10/18, p = 0,14) |
+  | g kapısız | 0,395 | 0,221 | +0,002 (13/18, p = 0,06) |
+  | + yumuşak fren (τ 20 s) | 0,382 | 0,201 | +0,015 (12/18, p = 0,03) |
+  | + konsolidasyon | 0,398 | 0,225 | −0,001 (5/18, p = 0,25) |
+  | + rahatlamada η kısma | 0,396 | 0,222 | +0,001 |
+  | gaz 10·η_0, frensiz | 0,278 | 0,046 | +0,119 (18/18) |
+  | gaz 10·η_0, valens freniyle | 0,365 | 0,174 | +0,033 (13/18) |
+
+  Kontroller (Dn − X, tüm günler): C_Dn (karıştırılmış) +0,003 (11/18, p = 0,09), P_Dn (oturum başına eşlenmiş sabit + aynı sensör) +0,006 (13/18, p = 0,016), Pg (tüm akışlarda eşlenmiş sabit η = 2,88e-3, α = 6,8e-5 + sensör) +0,024 (16/18, p < 0,001), Pm3 +0,033 (18/18), R5 +0,027 (14/18, p = 0,07), O +0,015 (12/18, p = 0,25). Day-0'da Dn = Pm (0,744); R5'ten +0,037 (6/6).
+- **Yorum:**
+  - Kazanç günü algılamaktan geliyor: sensör "bugün Day-0 değil" dediğinde okuma gazı (≤ 3·η_0) ve çapa gevşetme birlikte açılıyor (gevşetme +0,022, gaz +0,014). Gün içi zamanlamanın payı küçük (C'ye +0,003, P'ye +0,006).
+  - Oturum başına eşleme (v2-B, v2-P) günün bilgisini kontrole sızdırıyor; günler arası eşlenmiş sabit (Pg) bunu ayırıyor.
+  - Valensin freni gerçek bir koruma yapıyor ama yalnız aşırı gazda: 10·η_0'da frensiz ıraksama 0,278 → frenle 0,365. Ölçülü gazda öğrenmeyi yavaşlatıyor. Konsolidasyon nötr.
+  - g kapısı (alt-popülasyon kapılaması) nötr; elektrot kaybında zararlı (kayıp sonrası R² −0,013, 5/6; sensör açılınca g okumanın girdisini ölçekliyor).
+- **Karar (V5 kapanışı):** v2-D = Dn (önceden belirlenen ölçüt: tüm günler + oturum içi val R²; eşitlikte basit olan → konsolidasyonsuz). `configs/v2_v6.yaml`: arousal = sensör, gaz α_η = 2, gevşetme, g, fren / konsolidasyon / kısma kapalı. Kullanıcının üç kuralı yazıldığı gibi (D_user), valensli sürüm (D_val), g'siz (D_ng) ve fren karşılaştırması (D_g9, D_g9v) V6 testinde ayrıca raporlanır. V6 kontrolleri: v2-B, v2-P, v2-C (oturum başına eşlenmiş) ve Bg, Pg (günler arası eşlenmiş).
+- **İzler:** `docs/figures/v5_traces_indy_seed100.png`, `v5_traces_loco_seed100.png` (Dn ve kullanıcının tanımı D; sensör, λ_norm, arousal, valens / dominans, η, α, c / b), `v5_brake_g9_seed100.png` (10·η_0'da fren).
+
+### KR-048 — Faz V6 sonuçları: D > B ve D > P destekleniyor, D > C desteklenmiyor; elektrot kaybında sürekli yeniden ölçekleme daha iyi
+- **Koşu:** rapor seed'leri 0–4, test, Indy + Loco, `configs/v2_v6.yaml`, `runs/chain_v6.sh` (her primat × seed ayrı süreç, hiçbiri çökmedi); V4 testiyle aynı checkpoint'ler. Birleşik tablo `runs/v6_summary/table_v6.md` (kopyası `docs/v6_results.md`), koşu klasörleri `runs/20261108-190451_…` … `runs/20261108-204343_…`. Birim (oturum, seed): Day-k n = 20, tüm günler n = 30, oturum içi ve elektrot n = 30.
+- **Özet (ort.):**
+
+  | Koşul | Day-k | Tüm günler | Day-0 | Oturum içi | Elektrot: kayıp sonrası | Toparlanma s |
+  |---|---|---|---|---|---|---|
+  | A | −0,066 | 0,211 | 0,766 | 0,726 | 0,493 | 27,2 |
+  | v2-B (Bm_D) | 0,039 | 0,284 | 0,773 | 0,731 | 0,545 | 22,6 |
+  | R5 | 0,251 | 0,413 | 0,738 | 0,704 | **0,652** | **11,2** |
+  | Pm | 0,211 | 0,398 | 0,773 | 0,730 | 0,606 | 17,6 |
+  | Pm3 | 0,232 | 0,411 | 0,771 | 0,724 | 0,608 | 17,2 |
+  | O | 0,251 | 0,425 | 0,773 | 0,731 | 0,532 | 25,8 |
+  | Pg | 0,240 | 0,418 | 0,775 | 0,729 | 0,612 | 17,7 |
+  | v2-P (P_D) | 0,272 | 0,439 | 0,773 | 0,729 | 0,610 | 17,6 |
+  | v2-C (C_D) | 0,277 | 0,443 | 0,775 | 0,730 | 0,608 | 16,6 |
+  | **v2-D** | **0,279** | **0,444** | 0,775 | 0,730 | 0,604 | 17,5 |
+  | D_ng (g'siz) | 0,275 | 0,441 | 0,774 | 0,729 | 0,605 | 17,9 |
+  | D_user (kullanıcının üç kuralı) | 0,187 | 0,384 | 0,779 | 0,731 | 0,604 | 17,7 |
+  | D_val (sensör + valens) | 0,229 | 0,411 | 0,774 | 0,729 | 0,604 | 18,2 |
+  | D_g9 / D_g9v (10·η_0, frensiz / frenli) | 0,120 / 0,201 | 0,339 / 0,392 | 0,775 / 0,774 | 0,727 / 0,728 | 0,547 / 0,586 | 21,1 / 18,3 |
+
+- **Ana iddia (kesin Wilcoxon, Holm üç karşılaştırma üzerinde):**
+  - D > v2-B: Day-k +0,240 (20/20, p_Holm < 0,001), tüm günler +0,161 (30/30). **Destekleniyor.**
+  - D > v2-P: Day-k +0,007 (16/20, p_Holm = 0,0008), tüm günler +0,005 (26/30, p_Holm < 0,001). **Destekleniyor ama etki küçük.**
+  - D > v2-C: Day-k +0,002 (12/20, p = 0,097), tüm günler +0,001 (19/30, p = 0,064). **Desteklenmiyor**: gün içi zamanlama kazancın kaynağı değil.
+  - Elektrot kaybında yön ters: D − C −0,004 (5/30), D − P −0,007 (7/30); toparlanmada fark yok.
+  - Oturum içinde fark yok (|fark| ≤ 0,001).
+- **Ek karşılaştırmalar (D − X):** Pg (günler arası eşlenmiş sabit) Day-k +0,039 (20/20); Pm3 +0,047 (20/20); R5 Day-k +0,028 (15/20, p = 0,25), tüm günler +0,031 (25/30, p = 0,023), Day-0 +0,037 (10/10); O tüm günler +0,019 (25/30, p = 0,023); kullanıcının üç kuralı D_user Day-k +0,092 (20/20); valensli D_val +0,050 (20/20). Fren aşırı gazda koruyor: D_g9v − D_g9 Day-k +0,081.
+- **Oturumlar:** Indy 0630'da yalnız D toparlıyor (0,136; diğerleri ≤ 0,044; gaz + gevşetmeyle okuma kanal kimliği kaymasını kısmen öğreniyor). Indy 0131'de R5 / O 0,599, D 0,472: sensör tespit gecikmesi (KR-046) testte de bedel. Loco 0301 D 0,184, R5 0,114.
+- **Oturum içi** (primat ortalaması): Indy D 0,750 (A 0,752), Loco D 0,710 (A 0,701); NeuroBench SNN 0,593 / 0,568. **KV7:** Indy bantta; Loco hızlı / yavaş 0,016 / 0,017 (bant altı, V3'ten beri raporlanıyor).
+- **Elektrot kaybı:** sürekli yeniden ölçekleme (R5) en iyi (0,652, 11 s): ölü kanalın varyansı 0'a gidince x' kanalın Day-0 ortalamasına iner ve kanal nötr olur. Sensörlü koşullar (Pm, P, D) sapmayı fark edene kadar gecikiyor (≈ 17–18 s, 0,60–0,61). Sensörsüz okuma uyumu (B) zayıf (0,532). 5 s'lik kayan pencere R²'si durgun anlarda çok negatif olabildiği için toparlanma süresi gürültülü (std ≈ 15 s).
+- **Sonuç:** duygu sistemi "ne zaman uyum sağla" anahtarı olarak günler arası kaymada sabit kurallardan (B, P, Pg, Pm3, R5) iyi ve ilk günü koruyor. "Her an ne kadar öğren" ayarlayıcısı olarak (C ile aynı) katkısı yok. Kullanıcının iç arousal / valens kuralları sensörlü D'nin altında kalıyor; valensin freni yalnız aşırı öğrenme hızında koruyucu. Elektrot kaybında sensörlü kapı, sürekli açık ölçeklemenin gerisinde.
+- **Grafikler:** `docs/figures/v6_traces_indy_test_seed0.png` (D ve C izleri), `v6_recovery_indy_seed0.png`, `v6_recovery_loco_seed0.png` (kayan R², kayıp anı kesikli çizgi).
+
 ---
 
 ## Altyapı

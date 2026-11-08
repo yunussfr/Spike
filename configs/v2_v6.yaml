@@ -1,0 +1,49 @@
+# Faz V5 kapanışı (val ayarı) ve Faz V6 (test): dinamik duygu (KR-047) ve kontrolleri (experiments/v2_v6.py).
+# Ayar yalnızca ayar seed'leri (100–102) + val; test koşusu seçilen değerlerle, rapor seed'leri (0–4).
+base: v2_v5.yaml
+
+experiment:
+  name: v2_v6
+
+affect:
+  eta_0: 1.5e-3              # okuma η_0 (KR-046 val: 5e-4'ten iyi)
+
+v6:
+  fixed: [A, B, R5, Pm, Pm3, O, Bg, Pg]   # sabit koşullar; A ilk sırada (dyn koşullarının ortak izleme yolu)
+  pm_eta_scale: 3.0          # Pm3: sabit 3·η_0 (duygusuz yüksek η kontrolü)
+  global_matched: {eta: 2.88e-3, alpha: 6.8e-5}  # Bg / Pg: ayar koşusu 2'de D'nin (Dn) 24 akış ortalaması η, α
+  baseline_split: val        # u_0, q_0 tabanı: Day-0 (oturum içinde kendi) val dilimi, donuk model. "train": train sonu
+                             # (teşhis 1a: model train'e fazla uyuyor, Day-0 val hatası train tabanının ~5 katı)
+  dyn:                       # D'nin ortak ayarları (KR-047 val seçimi); zaman sabitleri saniye (λ = 1 − e^(−Δt/τ))
+    arousal: sensor          # kontrolü süren arousal: internal (iç hata + uyuşmazlık) | sensor (kalıcı sürpriz) | max
+                             # (ayar 1: internal Day-k'de a⁺ 0,00, Day-0'da 0,18 — ters; sensor 0,85 / 0,05)
+    gas_dom: false           # true → gaz a⁺·d⁻ (yalnız eski ağırlıklar çalışmazken); ayar 1'de fark yok
+    brake: false             # valens freni (ayar 2: −0,015; yalnız 10·η_0 gazda koruyor)
+    consolidate: false       # konsolidasyon (ayar 2: +0,001, eşit → basit olan)
+    w_u: 0.5                 # arousal karışımında başlık uyuşmazlığının ağırlığı
+    tau_arousal_s: 5.0       # E_a (iç hata + uyuşmazlık) düzeyi
+    tau_vfast_s: 2.0         # valens: hızlı EMA
+    tau_vmid_s: 20.0         # valens: orta EMA (eğilim = orta − hızlı)
+    tau_dom_s: 20.0          # dominans: e_v düzeyi
+    rho_v: 0.0               # rahatlamada η kısma: η·(1 − ρ_v·v⁺) (ayar 2: 0,5 ile −0,001)
+    tau_brake_s: 2.0         # frende ek çapa adımı α_b
+    tau_cons_s: 5.0          # konsolidasyon adımı λ_c
+    delta_m: 0.2             # m = clamp(‖W − W_anc‖ / (δ_m·‖W_0‖), 0, 1); Day-0'da ‖W − W_0‖ ≈ 0,04
+    cer_eta: 0.0             # iç beyincik NLMS adımı (0: donuk)
+    eta_scale: 1.0           # D'nin η_0 çarpanı
+  variants:                  # ad: dyn ayarlarının üzerine yazılanlar; bayraklar gas / brake / loosen / consolidate / gate
+    D: {}                                                  # v2-D: sensör arousal'ı → gaz (≤ 3·η_0) + çapa gevşetme + g
+    D_ng: {gate: false}                                    # alt-popülasyon kapılaması olmadan
+    D_user: {arousal: internal, brake: true, consolidate: true, rho_v: 0.5}   # kullanıcının üç kuralı yazıldığı gibi
+    D_val: {brake: true, consolidate: true, rho_v: 0.5}    # sensör arousal'ı + valens (fren, konsolidasyon, kısma)
+    D_g9: {alpha_eta: 9.0}                                 # aşırı gaz (≤ 10·η_0), frensiz
+    D_g9v: {alpha_eta: 9.0, brake: true, consolidate: true, rho_v: 0.5}       # aşırı gaz, valens freniyle
+  matched: [D]               # 2. geçiş: Bm_<v> (η̄, ᾱ), P_<v> (sensörlü yeniden ölçekleme + η̄, ᾱ), C_<v> (dizi karıştırma)
+  electrode:                 # v2-E: oturum içi checkpoint, değerlendirme diliminin ortasında kanal kaybı
+    n_channels: 20
+    at_frac: 0.5
+  recovery:                  # toparlanma: kayıptan sonraki ilk pencere R² ≥ kayıp öncesi pencere medyanı − tol
+    window_s: 5.0
+    step_s: 0.5
+    tol: 0.05
+  trace_every: 250           # iz kaydı (adım; 1 s)

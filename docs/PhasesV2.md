@@ -137,7 +137,9 @@ Kurallar:
 
 ---
 
-## Faz V5 — Beyincik v2, duygu uzayı v2 ve duygu-kapılı W_in plastisitesi (KR-044)
+## Faz V5 — Beyincik v2, duygu uzayı v2 ve duygu-kapılı W_in plastisitesi (KR-044)  ✅ Tamamlandı (2026-11-08)
+
+> Sonuç (KR-045–KR-047, ayar seed'leri, val): etiketsiz kanal yeniden ölçekleme günler arası Day-k R²'yi 0,02 → 0,20'ye çıkarıyor ama ilk günde −0,04; W_in kuralı okuma uyumunu geçmedi (kapalı). Kapalı döngü duygu-kapılı ölçekleme söndü (eşlenmiş sabiti geçmedi); kalıcı sürpriz sensörü (ham hedefli donuk izleme beyinciği + girdi sapması) ilk günü koruyor (Pm Day-0 0,744, R5 0,707). Dinamik duygu: kullanıcının iç arousal'ı günü ayırmıyor (başlık uyuşmazlığı kaymada düşüyor); sensör arousal'ıyla gaz + çapa gevşetme (v2-D) tüm günlerde 0,397 (R5 0,371, O 0,382, günler arası eşlenmiş sabit Pg 0,373), Day-k 0,224. Gün içi zamanlamanın payı küçük (C +0,003, P +0,006); valens freni yalnız aşırı gazda (10·η_0) koruyor (0,278 → 0,365), ölçülü gazda zararlı. g kapısı nötr. İzler `docs/figures/v5_*.png`.
 
 **Hedef:** Tam önerilen sistem **D** ve kontrolleri **C (karıştırılmış η, η_in)**, **W (duygusuz W_in kuralı)**, **L (etiketsiz)**.
 
@@ -148,6 +150,7 @@ Kurallar:
 - **Önce etiketsiz kontroller (L):** Day-0 hedefli homeostaz, akan kanal z-skoru; ayar seed'leri, val, günler arası. Sonuç kullanıcıya.
 - `TemporalBackbone.step(x, w_in=...)` koşul başına W_in; W_in üç faktörlü kuralı (§12.13), η_in(t) = η_in,0·max(0, a). W_cer Day-0 train'de ridge ile başlatılır.
 - **Karar kapısı:** W val'de B'yi geçmiyorsa duygu kapısı anlamsız → kullanıcıya dönülür.
+- **Eklenenler (KR-045–KR-047):** duygu-kapılı kanal yeniden ölçeklemesi (§12.14); kalıcı sürpriz sensörü (ham hedefli donuk izleme beyinciği + girdi sapması, sabit Day-0 tabanı, eşikli kapı, dönüş); dinamik duygu (arousal düzey, valens e_v eğilimi, dominans e_v düzeyi → gaz, fren, çapa gevşetme, akış içi konsolidasyon; §12.6, §12.7). Kontroller v2-R, v2-P, Pm3 (sabit 3·η_0), O (gün bilgisiyle üst sınır).
 
 **Testler:**
 - K3/KV3: e_cer yalnızca W_cer'i, e_v yalnızca okuma başlıklarını ve W_in'i günceller; duygu uzayı ikisini yalnızca okur.
@@ -164,20 +167,22 @@ Kurallar:
 
 ---
 
-## Faz V6 — Asıl deney: günler arası kayma ve elektrot kaybı
+## Faz V6 — Asıl deney: günler arası kayma ve elektrot kaybı  ✅ Tamamlandı (2026-11-08)
+
+> Sonuç (KR-048, test, 5 seed, Indy + Loco): günler arası Day-k R² A −0,066, v2-B 0,039, R5 0,251, v2-P 0,272, v2-C 0,277, **v2-D 0,279**; tüm günler D 0,444 (R5 0,413, O 0,425, Pg 0,418); Day-0 D 0,775 (R5 0,738). D > B (20/20, p_Holm < 0,001) ve D > P (Day-k +0,007, 16/20, p_Holm = 0,0008) destekleniyor; D > C desteklenmiyor (+0,002, p = 0,10): kazanç gün içi zamanlamadan değil, günün algılanmasından. Elektrot kaybında sürekli yeniden ölçekleme en iyi (R5 kayıp sonrası 0,652, toparlanma 11 s; D 0,604, 17,5 s). Oturum içinde fark yok (Indy 0,750, Loco 0,710; NeuroBench SNN 0,593 / 0,568). Kullanıcının üç kuralı yazıldığı gibi (D_user) Day-k 0,187. Tablo `docs/v6_results.md`, grafikler `docs/figures/v6_*.png`.
 
 **Hedef:** v2 araştırma sorusunu cevaplamak.
 
 **Yapılacaklar:**
-- Koşullar A–E (§12.9), aynı test akışı, 5 rapor seed'i, Indy + Loco.
-- Senaryolar: oturum içi test, Day-0 → Day-k, E (akış ortasında 20 kanal sıfırlanır).
-- Metrikler: R², toparlanma süresi (E), ateşleme oranı, η/g izleri.
-- İstatistik: D–B ve D–C için Wilcoxon (5 seed × oturum).
-- `scripts/make_tables.py` v2 tabloları.
+- Koşullar (§12.9): A, v2-B (η̄, ᾱ eşlenmiş), v2-P (sensörlü yeniden ölçekleme + η̄, ᾱ), v2-C (η, α, c dizileri karıştırılmış), v2-D; bağlam için Pm, Pm3, R5, O. v2-W dışarıda (KR-045). Aynı test akışı, 5 rapor seed'i, Indy + Loco (`experiments/v2_v6.py`, `runs/chain_v6.sh`).
+- Senaryolar: oturum içi test, Day-0 → Day-k, E (oturum içi model; değerlendirme diliminin ortasında seed'e bağlı 20 kanalın ham sayımı 0).
+- Metrikler: R², kayıp sonrası R² ve toparlanma süresi (E), ateşleme oranı, a/v/d/η/α/g izleri.
+- İstatistik: D–B, D–C, D–P için kesin Wilcoxon (5 seed × oturum) ve Holm (`src/v2/stats.py`).
+- `scripts/make_tables_v2.py` v2 tabloları; `scripts/plot_v2_traces.py` izler ve toparlanma eğrileri.
 
 **Çıkış kriteri:**
 - Sonuç tablosu ve grafikler hazır.
-- Ana iddia (D > B ve D > C) ya destekleniyor ya desteklenmiyor; ikisi de raporlanabilir.
+- Ana iddia (D > B, D > C ve D > P) ya destekleniyor ya desteklenmiyor; ikisi de raporlanabilir.
 
 ---
 
@@ -190,5 +195,5 @@ Kurallar:
 | V2 | Eğitilebilir omurga, mod seçimi | — |
 | V3 | Ön-eğitim + Day-0 + 5 başlıklı okuma | A |
 | V4 | Çapalı NLMS akışı | B |
-| V5 | Beyincik v2 + duygu v2 + duygu-kapılı W_in | C, D, W, L |
-| V6 | Kayma ve elektrot kaybı deneyi | A–E |
+| V5 | Beyincik v2 + duygu v2 + duygu-kapılı W_in, kalıcı sürpriz sensörü, dinamik duygu | C, D, W, L, R, P |
+| V6 | Kayma ve elektrot kaybı deneyi | A, B, P, C, D, E (+ Bg, Pg) |

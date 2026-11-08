@@ -139,7 +139,7 @@ def main() -> None:
     def record(res: Any, conds: list[Condition], pr: Prepared, meta: dict[str, Any], t0: float) -> None:
         sl = pr.session.split(a.split)
         y = (pr.y[sl] * pr.y_sd + pr.y_mu).cpu()
-        late = ms_to_steps(1000.0 * a.late_s, dt)
+        late = ms_to_steps(1000.0 * a.late_s, dt) if a.late_s > 0 else 0
         h = res.rate.shape[1] // 2
         for e, c in enumerate(conds):
             lam_e = res.lam[e]
