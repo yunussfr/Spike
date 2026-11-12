@@ -9,6 +9,9 @@ yalnızca ek bilgidir (seed'ler aynı verinin tekrarıdır, bağımsız değildi
 Kullanım:
     uv run python scripts/make_tables_v2.py --runs runs/<koşu 1> runs/<koşu 2> ... --out runs/v6_summary \\
         [--export results/v6]   # birim satırları + tablo: depoya girecek özet
+    # V8 (KR-051): S ve M koşuları birlikte; koşul adları `<koşul>@<omurga>` olur, ek bölüm oturum eşli M − S
+    uv run python scripts/make_tables_v2.py --runs runs/<S koşusu> runs/<M koşusu> --backbones --main D7@M \\
+        --claims D7@S A@M --extra A@S --title "Faz V8" --export results/v8/<protokol>
 """
 
 import argparse
@@ -71,9 +74,13 @@ def main() -> None:
     p.add_argument("--extra", nargs="*", default=["Pm3", "Pm", "B", "R5", "O"])
     p.add_argument("--title", default="Faz V6")
     p.add_argument("--export", default=None, help="birim satırları (rows.json) ve tablonun depoya kopyalanacağı klasör")
+    p.add_argument("--backbones", action="store_true", help="V8: koşul adına omurga kolu eklenir (A@S, D7@M) + M − S bölümü")
     a = p.parse_args()
     runs = [Path(r) for r in a.runs]
     rows = load(runs)
+    if a.backbones:
+        for r in rows:
+            r["cond"] = f"{r['cond']}@{r.get('backbone', 'S')}"
     out = Path(a.out) if a.out else runs[0]
     out.mkdir(parents=True, exist_ok=True)
     D = a.main
@@ -126,6 +133,38 @@ def main() -> None:
             L.append(f"| {g} | {x} | {est:+.3f} | [{lo:+.3f}, {up:+.3f}] | {int((ds > 0).sum())}/{len(ds)} | {p_s:.3f} | "
                      f"{min_exact_p(len(ds)):.3f} | {hp} | {pa[x]:.3f} | {int((d > 0).sum())}/{len(d)} | {p_u:.4f} |")
 
+    # 2b. V8: omurga kolu M − S, aynı koşul, oturum eşli (birincil V8 iddiası A ve D7'de; Holm tüm koşullarda)
+    if a.backbones:
+        base = list(dict.fromkeys(c.rsplit("@", 1)[0] for c in conds))
+        pairs = [b for b in base if f"{b}@M" in conds and f"{b}@S" in conds]
+        L += ["", "## Omurga kolu: M − S (aynı koşul, oturum eşli)", "",
+              "M: ÖN + Day-0 omurgası; S: yalnız Day-0 (§12.21). Fark oturum ortalamalarının ortalaması; pozitif = M iyi "
+              "(toparlanmada S − M). `etkileşim`: (D − A)_M − (D − A)_S, yani uyumun kazancının omurgaya göre değişimi.", "",
+              "| Grup | Koşul | fark | %95 GA | oturum kazanma | p (oturum) | en küçük p | p Holm (grup içi) |",
+              "|---|---|---|---|---|---|---|---|"]
+        Dm = D.rsplit("@", 1)[0]
+        for g, (f, m, hi) in GROUPS.items():
+            sign = 1.0 if hi else -1.0
+            stats = []
+            items = [(b, [(b, "M", 1.0), (b, "S", -1.0)]) for b in pairs]
+            if "A" in pairs and Dm in pairs and Dm != "A":
+                items.append((f"etkileşim {Dm}−A", [(Dm, "M", 1.0), ("A", "M", -1.0), (Dm, "S", -1.0), ("A", "S", 1.0)]))
+            for name, terms in items:
+                ks = sorted({key(r) for r in rows if f(r) and m in r}
+                            & set.intersection(*[{key(r) for r in rows if r["cond"] == f"{b}@{k}" and f(r) and m in r}
+                                                 for b, k, _ in terms]))
+                if not ks:
+                    continue
+                units = [(k_[1], sign * sum(w * by[(k_, f"{b}@{k}")][m] for b, k, w in terms)) for k_ in ks]
+                ds = np.array(list(session_means(units).values()))
+                _, p_s, _ = wilcoxon_signed_rank(ds)
+                est, lo, up = cluster_bootstrap_ci(units, N_BOOT, ALPHA, BOOT_SEED)
+                stats.append((name, ds, p_s, est, lo, up))
+            hp = holm([s_[2] for s_ in stats]) if stats else []
+            for (name, ds, p_s, est, lo, up), h in zip(stats, hp):
+                L.append(f"| {g} | {name} | {est:+.3f} | [{lo:+.3f}, {up:+.3f}] | {int((ds > 0).sum())}/{len(ds)} | "
+                         f"{p_s:.3f} | {min_exact_p(len(ds)):.3f} | {h:.3f} |")
+
     # 3. oturum × koşul
     for sc in dict.fromkeys(r["scenario"] for r in rows):
         m = "r2_post" if sc == "electrode" else "r2"
@@ -147,13 +186,14 @@ def main() -> None:
           "| Primat | A | D | NeuroBench SNN | NeuroBench ANN |", "|---|---|---|---|---|"]
     for pm in sorted({r["primate"] for r in rows}):
         f = lambda c: [r["r2"] for r in rows if r["primate"] == pm and r["scenario"] == "within" and r["cond"] == c]   # noqa: E731
-        L.append(f"| {pm} | {ms(f('A'))} | {ms(f(D))} | {NEUROBENCH[pm]['SNN']:.3f} | {NEUROBENCH[pm]['ANN']:.3f} |")
+        nb = NEUROBENCH.get(pm, {"SNN": float("nan"), "ANN": float("nan")})          # Dryad: NeuroBench tabanı yok
+        L.append(f"| {pm} | {ms(f('A'))} | {ms(f(D))} | {nb['SNN']:.3f} | {nb['ANN']:.3f} |")
 
     # 5. KV7
     L += ["", f"## Ateşleme oranı (KV7, bant {BAND[0]}–{BAND[1]})", "", "| Primat | Koşul | hızlı | yavaş | bant |",
           "|---|---|---|---|---|"]
     for pm in sorted({r["primate"] for r in rows}):
-        for c in ("A", D):
+        for c in dict.fromkeys(["A", D] + ([f"A@{k}" for k in ("S", "M")] if a.backbones else [])):
             rs = [r for r in rows if r["primate"] == pm and r["cond"] == c]
             if rs:
                 fa, sl = np.mean([r["rate_fast"] for r in rs]), np.mean([r["rate_slow"] for r in rs])

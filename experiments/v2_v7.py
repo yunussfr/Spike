@@ -4,6 +4,9 @@ Protokoller:
   test  — `primates` (NeuroBench oturumları); senaryolar crossday / within / electrode (V6 ile aynı tanım).
   tune  — `tune_primates` (test dışı oturumlar; Day-0 modeli aynı): crossday (Day-0 → ayar oturumları) ve electrode
           (ayar oturumu + değerlendirme diliminin ortasında kanal kaybı, Day-0 modeli). Test oturumlarına dokunmaz.
+  ext   — (V8, KR-051) `ext_primates` (EK test oturumları); tune ile aynı senaryolar, ayrı tablo.
+Omurga kolu (V8, §12.9): `--ckpt-stage day0` (S, yalnız Day-0) | `multiday` (M, ÖN + Day-0); satırlarda `backbone`.
+`--electrode-crossday`: test protokolünde elektrot kaybı da günler arası (Day-0 / multiday) modelle koşar (V8).
 Geçişler (aynı akış, aynı model):
   1. ReFIT: A, R5, G7 (Degenhart akış başından), D7 (BOCPD + ölü kanal + Degenhart + dinamik duygu), D7 ablasyonları
   2. ReFIT, eşlenmiş: B7 (D7'nin η̄, ᾱ'sı), P7 (D7'nin girdi tarafı + η̄, ᾱ), C7 (D7'nin η, α, c dizileri karıştırılmış)
@@ -20,6 +23,8 @@ Kullanım:
         --protocol tune --split val            # ayar: ayar seed'leri
     uv run python experiments/v2_v7.py --config configs/v2_v7.yaml --runs ... --runs_v6 runs/<v3 indy> runs/<v3 loco> \\
         --protocol test --split test           # rapor: rapor seed'leri
+    uv run python experiments/v2_v7.py --config configs/v2_v8.yaml --runs runs/<v8 ön-eğitim indy> --primates indy \\
+        --ckpt-stage multiday --protocol tune --split val    # V8: kol M (kol S için --ckpt-stage day0)
 """
 
 import argparse
@@ -204,7 +209,9 @@ def main() -> None:
     p.add_argument("--config", required=True)
     p.add_argument("--runs", nargs="+", required=True, help="V7 (augmentation'lı) checkpoint koşuları")
     p.add_argument("--runs_v6", nargs="*", default=[], help="V6 checkpoint koşuları (D7@v6 geçişi)")
-    p.add_argument("--protocol", choices=["test", "tune"], default="tune")
+    p.add_argument("--protocol", choices=["test", "tune", "ext"], default="tune")
+    p.add_argument("--ckpt-stage", choices=["day0", "multiday"], default="day0", help="günler arası model (V8 kolu S / M)")
+    p.add_argument("--electrode-crossday", action="store_true", help="test protokolünde elektrot kaybı günler arası modelle")
     p.add_argument("--seeds", nargs="*", type=int, default=None)
     p.add_argument("--split", choices=["val", "test"], default="val")
     p.add_argument("--scenarios", nargs="*", default=["crossday", "within", "electrode"])
@@ -217,14 +224,20 @@ def main() -> None:
         seeds = cfg["experiment"]["seeds"]
     else:
         seeds = a.seeds if a.seeds is not None else cfg["experiment"]["tune_seeds"]
-    cfg["experiment"]["name"] = f"v2_v7_{a.protocol}_{a.split}"
+    stage = a.ckpt_stage
+    backbone = {"day0": "S", "multiday": "M"}[stage]
+    cfg["experiment"]["name"] = (f"{cfg['experiment']['name']}_{a.protocol}_{a.split}"
+                                 + ("" if stage == "day0" else f"_{stage}"))     # V7: v2_v7_<protokol>_<bölme>
     device = resolve_device(cfg["experiment"]["device"])
     runs, runs6 = [Path(r) for r in a.runs], [Path(r) for r in a.runs_v6]
-    if a.protocol == "tune":
-        a.scenarios = [s for s in a.scenarios if s != "within"]              # ayar oturumlarının ince ayar modeli yok
+    crossday_proto = a.protocol in ("tune", "ext")                           # Day-k'ler test dışı ya da EK
+    if crossday_proto:
+        a.scenarios = [s for s in a.scenarios if s != "within"]              # ayar / EK oturumlarının ince ayar modeli yok
+    el_cross = crossday_proto or a.electrode_crossday
     logger = RunLogger(cfg, seeds, a.config)
     logger.save_json("inputs.json", {"runs": [str(r) for r in runs], "runs_v6": [str(r) for r in runs6],
-                                     "split": a.split, "protocol": a.protocol, "scenarios": a.scenarios})
+                                     "split": a.split, "protocol": a.protocol, "scenarios": a.scenarios,
+                                     "ckpt_stage": stage, "backbone": backbone, "electrode_crossday": el_cross})
     ctx = Ctx7(cfg, a.split)
     dt, v6 = ctx.dt, ctx.v6
     rc, el = v6["recovery"], v6["electrode"]
@@ -247,7 +260,7 @@ def main() -> None:
             pred = (res.pred[e] * pr.y_sd + pr.y_mu).cpu()
             ex = res.extra
             ab = ex["a_bocpd"][e].cpu()
-            row = {**meta, "session": pr.session.name, "cond": c.name, "r2": r2_neurobench(pred, y), "label": label,
+            row = {**meta, "backbone": backbone, "session": pr.session.name, "cond": c.name, "r2": r2_neurobench(pred, y), "label": label,
                    "ckpt": ck, "bocpd_source": src or ctx.bc["source"],
                    "a_int_pos_mean": float(ex["a_int"][e].clamp(min=0.0).mean()),
                    "dw_rel": float(res.dw_rel[e]), "anc_rel": float(ex["anc_rel"][e]),
@@ -321,24 +334,24 @@ def main() -> None:
         logger.save_json("refs.json", refs_log)
 
     for primate in a.primates or list(cfg["primates"]):
-        day0, dayk = crossday_sessions(cfg, primate, tune=a.protocol == "tune")
+        day0, dayk = crossday_sessions(cfg, primate, protocol=a.protocol)
         names = [day0] + dayk
         sessions = {n: load_v2_session(cfg, n) for n in names}
         C, D = sessions[day0].D_in, sessions[day0].y.shape[1]
         for seed in seeds:
-            m = load(runs, f"day0_{primate}_seed{seed}.pt", C, D)
+            m = load(runs, f"{stage}_{primate}_seed{seed}.pt", C, D)
             m6 = load(runs6, f"day0_{primate}_seed{seed}.pt", C, D)
             if m is not None and ({"crossday", "electrode"} & set(a.scenarios)):
                 pr0 = prepare_session(cfg, sessions[day0], device)
                 r7 = ctx.make_ref7(m, pr0)
                 r76 = ctx.make_ref7(m6, pr0) if m6 is not None else None
-                log_ref(r7, primate=primate, seed=seed, model="day0")
+                log_ref(r7, primate=primate, seed=seed, model=stage)
                 for n in names:
                     pr = pr0 if n == day0 else prepare_session(cfg, sessions[n], device, stats_from=sessions[day0])
-                    if "crossday" in a.scenarios and not (a.protocol == "tune" and n == day0):
+                    if "crossday" in a.scenarios and not (crossday_proto and n == day0):
                         evaluate(m, m6, pr, r7, r76, None, primate=primate, seed=seed, scenario="crossday",
                                  day=names.index(n), protocol=a.protocol)
-                    if "electrode" in a.scenarios and a.protocol == "tune" and n != day0:
+                    if "electrode" in a.scenarios and el_cross and n != day0:
                         sl = sessions[n].split(a.split)
                         at = sl.start + int(el["at_frac"] * (sl.stop - sl.start))
                         s_e, ch = drop_channels(sessions[n], at, el["n_channels"], 1000 * seed + names.index(n))
@@ -363,7 +376,7 @@ def main() -> None:
                     if "within" in a.scenarios:
                         evaluate(m, m6, pr, r7, r76, None, primate=primate, seed=seed, scenario="within",
                                  day=names.index(n), protocol=a.protocol)
-                    if "electrode" in a.scenarios:
+                    if "electrode" in a.scenarios and not el_cross:
                         sl = sessions[n].split(a.split)
                         at = sl.start + int(el["at_frac"] * (sl.stop - sl.start))
                         s_e, ch = drop_channels(sessions[n], at, el["n_channels"], 1000 * seed + names.index(n))
