@@ -6,11 +6,15 @@ Primat başına, her seed için (`stages` sırasıyla):
   day0     — yalnızca Day-0 oturumunda sıfırdan eğitim; Day-k oturumlarını hiç görmez. Day-k val/test dilimleri
              Day-0 istatistikleriyle kodlanıp donuk modelle skorlanır (v2-A günler arası). V4'ün başlangıç modeli.
   scratch  — hedef oturumda sıfırdan eğitim (ön-eğitimin katkısını ölçmek için)
+  multiday — (V8, KR-051, §12.21) ÖN oturumları (`pre_primates`, hepsi Day-0'dan önce) + Day-0 birlikte, hepsi Day-0
+             istatistikleriyle kodlanır (`multiday.epochs`); sonra Day-0 ince ayarı (`multiday.finetune`: full | readout)
+             ve W_0 çapası. Day-k'yi hiç görmez. Checkpoint `multiday_<p>_seed<s>.pt` (ara: `multiday_pre_…`).
 Model seçimi yalnızca val ile. Test R² yalnızca `--report-test` ile hesaplanır.
 Checkpoint'ler koşu klasörüne, SHA-256 özetleri `checkpoints.json`'a yazılır (KV8).
 
 Kullanım (primatlar ayrı süreçte paralel koşabilir):
     uv run python experiments/v2_pretrain.py --config configs/v2_pretrain.yaml --primates indy [--targets all] [--report-test]
+    uv run python experiments/v2_pretrain.py --config configs/v2_pretrain_v8.yaml --primates indy --seeds 100   # V8: multiday + day0
 """
 
 import argparse
@@ -29,9 +33,9 @@ from src.v2.metrics import r2_neurobench  # noqa: E402
 from src.utils.config import apply_overrides, load_config, resolve_device  # noqa: E402
 from src.utils.logging import RunLogger  # noqa: E402
 from src.utils.seeding import set_seed  # noqa: E402
-from src.v2.data import crossday_sessions, load_v2_session  # noqa: E402
+from src.v2.data import check_roles, crossday_sessions, load_v2_session, session_roles  # noqa: E402
 from src.v2.model import V2Model  # noqa: E402
-from src.v2.train import Prepared, evaluate, prepare_session, train_model  # noqa: E402
+from src.v2.train import Prepared, evaluate, prepare_session, set_finetune_mode, train_model  # noqa: E402
 
 
 def stage_cfg(cfg: dict[str, Any], epochs: int, lr: float | None = None) -> dict[str, Any]:
@@ -107,6 +111,19 @@ def main() -> None:
         preps = {n: prepare_session(cfg, sessions[n], device) for n in names}
         targets = names if a.targets == "all" else [n for n in names if n in cfg["tune_files"]]
         C, D = sessions[names[0]].D_in, sessions[names[0]].y.shape[1]
+        pre_names: list[str] = []
+        pre_preps: list[Prepared] = []
+        if "multiday" in stages:                                             # ÖN: Day-0 istatistikleriyle (§12.21)
+            check_roles(cfg)
+            pre_names = session_roles(cfg, primate).pre
+            if not pre_names:
+                raise ValueError(f"multiday: pre_primates.{primate} boş")
+            for n in pre_names:
+                s = load_v2_session(cfg, n)
+                if s.D_in != C:
+                    raise ValueError(f"multiday: {n} {s.D_in} kanal, Day-0 {C} (scripts/audit_sessions.py)")
+                pre_preps.append(prepare_session(cfg, s, device, stats_from=sessions[day0]))
+                del s
         for seed in seeds:
             def log_epoch(row: dict, stage: str, target: str = "") -> None:
                 nonlocal step
@@ -158,6 +175,36 @@ def main() -> None:
                                       lambda r, n=n: log_epoch(r, "scratch", n))
                     record(primate=primate, seed=seed, stage="scratch", session=n, best_epoch=res.best_epoch,
                            **scores(m, preps[n]))
+            if "multiday" in stages:
+                md = cfg["multiday"]
+                set_seed(seed)
+                m = V2Model(cfg, C, D).to(device)
+                prev = resumed(f"multiday_{primate}_seed{seed}.pt", m)
+                best = -1
+                if prev is None:
+                    mid = resumed(f"multiday_pre_{primate}_seed{seed}.pt", m)
+                    if mid is None:                                          # ÖN + Day-0 ortak eğitim
+                        res = train_model(m, [*pre_preps, preps[day0]], stage_cfg(cfg, a.epochs or md["epochs"]), seed,
+                                          r2_neurobench, None, lambda r: log_epoch(r, "multiday_pre"))
+                        save(res.state, f"multiday_pre_{primate}_seed{seed}.pt")
+                        for n, pk in zip(pre_names, pre_preps):
+                            record(primate=primate, seed=seed, stage="multiday_pre", session=n, eval_on=n,
+                                   best_epoch=res.best_epoch, **scores(m, pk))
+                    set_finetune_mode(m, md["finetune"])                    # Day-0 ince ayarı (full | readout)
+                    res = train_model(m, preps[day0], stage_cfg(cfg, a.epochs or md["finetune_epochs"],
+                                                                md["finetune_lr"]), seed, r2_neurobench, None,
+                                      lambda r: log_epoch(r, "multiday", day0))
+                    set_finetune_mode(m, "full")
+                    m.readout.save_anchor()
+                    save(m.state_dict(), f"multiday_{primate}_seed{seed}.pt")
+                    best = res.best_epoch
+                record(primate=primate, seed=seed, stage="multiday", session=day0, eval_on=day0, best_epoch=best,
+                       finetune=md["finetune"], **scores(m, preps[day0]))
+                for n in dayk:                                               # donuk M omurgası, Day-0 istatistikleri
+                    pk = prepare_session(cfg, sessions[n], device, stats_from=sessions[day0])
+                    record(primate=primate, seed=seed, stage="multiday", session=n, eval_on=n, best_epoch=best,
+                           finetune=md["finetune"], **scores(m, pk))
+                    del pk
             if "day0" in stages:
                 set_seed(seed)
                 m = V2Model(cfg, C, D).to(device)
@@ -192,6 +239,7 @@ def main() -> None:
         bad = "" if h["f_min"] <= rf <= h["f_max"] and h["f_min"] <= rs <= h["f_max"] else " ✗"
         lines.append(f"| {n} | {stg} | {k.mean():.3f} ± {k.std():.3f} | {v.mean():.3f} | {rf:.3f} / {rs:.3f}{bad} |")
     lines += ["", f"Seed {seeds}. day0 satırları: Day-0'da eğitilen donuk model; Day-k satırları günler arası (v2-A). "
+              f"multiday: ÖN + Day-0 omurgası, Day-0 ince ayarlı (V8, kol M); multiday_pre: ÖN oturumlarında ara model. "
               f"✗: alt-popülasyon oranı [{h['f_min']}, {h['f_max']}] dışında (KV7)."]
     logger.path("table.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))

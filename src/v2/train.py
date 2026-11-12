@@ -90,7 +90,10 @@ class TrainStep:
         self.lam = h["loss_weight"] if model.backbone.spiking else 0.0      # KV7: tau_gru muaf
         self.graph = bool(t["cuda_graph"]) and device.type == "cuda"
         lr = torch.tensor(t["lr"], device=device) if self.graph else t["lr"]
-        self.opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=t["weight_decay"], capturable=self.graph)
+        params = [p for p in model.parameters() if p.requires_grad]          # V8 `readout` ince ayarı: omurga donuk
+        if not params:
+            raise ValueError("eğitilecek parametre yok")
+        self.opt = torch.optim.AdamW(params, lr=lr, weight_decay=t["weight_decay"], capturable=self.graph)
         self.sched = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt, T_max=epochs)
         self.sx = torch.zeros(B, L, C, device=device)                       # [B, L, C] sabit girdi tamponu
         self.sy = torch.zeros(B, L, D, device=device)
@@ -141,6 +144,15 @@ class TrainStep:
         self.model.zero_grad(set_to_none=True)
         self.g, self.static_loss = None, None
         release_graph_memory()
+
+
+def set_finetune_mode(model: V2Model, mode: str) -> None:
+    """İnce ayar biçimi (§12.8 Aşama 1b, KR-051). full: tüm parametreler eğitilir; readout: omurga donuk
+    (`requires_grad=False`), yalnız okuma başlıkları eğitilir. Eğitimden sonra `full` ile geri alınır."""
+    if mode not in ("full", "readout"):
+        raise ValueError(f"multiday.finetune: full | readout, verilen {mode!r}")
+    for prm in model.backbone.parameters():
+        prm.requires_grad_(mode == "full")
 
 
 def release_graph_memory() -> None:
