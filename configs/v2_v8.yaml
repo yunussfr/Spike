@@ -1,0 +1,84 @@
+# Faz V8 (KR-051): çoklu-gün omurgası ve hayvan başına oturum rolleri (ARCHITECTURE.md §12.21, docs/PlanV8.md).
+# Çevrimiçi deney V7 ile aynı (experiments/v2_v7.py), yalnız checkpoint kolu (--ckpt-stage day0 | multiday) ve roller farklı.
+# Roller: ÖN (pre_primates) < Day-0 (primates[p][0]) < AYAR (tune_primates) / TEST (primates[p][1:]) / EK (ext_primates);
+# kurallar src/v2/data.py `check_roles` ile zorunlu. Ön-eğitim config'i configs/v2_pretrain_v8.yaml bu dosyayı devralır.
+base: v2_v7.yaml
+
+experiment:
+  name: v2_v8
+
+data:
+  files:                     # Day-0 + TEST. Loco Day-0 V8'de 2017-02-14 (loco_20170210_03 ÖN'e geçti)
+    - indy_20170131_02
+    - indy_20160630_01
+    - indy_20160622_01
+    - loco_20170301_05
+    - loco_20170215_02
+    - loco_20170214_02
+  tune_files:                # AYAR (loco_20170213_02 ÖN'e geçti, loco_20170216_02 eklendi)
+    - indy_20160624_03
+    - indy_20161014_04
+    - indy_20170127_03
+    - loco_20170216_02
+    - loco_20170217_02
+    - loco_20170227_04
+  pre_files:                 # ÖN: Day-0'dan önceki günler
+    - indy_20160407_02
+    - indy_20160411_01
+    - indy_20160411_02
+    - indy_20160418_01
+    - indy_20160419_01
+    - indy_20160420_01
+    - indy_20160426_01
+    - loco_20170210_03
+    - loco_20170213_02
+  ext_files:                 # EK test: sonuçlara bakmadan sabitlendi (2026-11-11, KR-051)
+    - indy_20160627_01
+    - indy_20160916_01
+    - indy_20161006_02
+    - indy_20161027_03
+    - indy_20161207_02
+    - indy_20170124_01
+    - loco_20170228_02
+    - loco_20170302_02
+  md5:                       # Zenodo 583331 API'sinden (2026-11-12); boyutlar yorumda
+    indy_20160407_02: 63ab3e2e55652fb5709eb024642111cf   # 418 MB
+    indy_20160411_01: cee905e1021535626a442748e5612643   # 663 MB
+    indy_20160411_02: 1f7b4d964f931411789d1aa2ff10f018   # 590 MB
+    indy_20160418_01: ae16e46a6f1614103b451c17674ff3eb   # 817 MB
+    indy_20160419_01: e5155b431035f32ee37c81915db755fc   # 377 MB
+    indy_20160420_01: 02546235653357a08430b5dd8d5d1265   # 923 MB
+    indy_20160426_01: cfbeaffc1717e2dd11ee8c5ac6f7a297   # 1067 MB
+    indy_20160627_01: de58797d649bdf2bec589c074ee991d2   # 1135 MB
+    indy_20160916_01: 5587d27f46efa3c09a7f589f2addf3a9   # 124 MB
+    indy_20161006_02: 8e19ada5feee4cdef47a0ec66503076f   # 108 MB
+    indy_20161027_03: bae4f5b76c50e2e2aed775e6d2482fc3   # 128 MB
+    indy_20161207_02: b984a86fd30417fa8301136102caf2ad   # 106 MB
+    indy_20170124_01: ea1721fefe443420a356b4f93f5bb731   # 152 MB
+    loco_20170214_02: 3f410a56706563b4ce5584c5b5c83cf2   # 1649 MB
+    loco_20170216_02: ec480664e7da8c6be0ba8ee709eecf8b   # 1342 MB
+    loco_20170228_02: 79d99cd6b8db25ba0420a906350a44ff   # 1600 MB
+    loco_20170302_02: ccbba097e02fa300ab5a87b27702f337   # 1964 MB
+
+primates:                    # [Day-0, TEST…]
+  indy: [indy_20160622_01, indy_20160630_01, indy_20170131_02]
+  loco: [loco_20170214_02, loco_20170215_02, loco_20170301_05]
+
+tune_primates:
+  indy: [indy_20160624_03, indy_20161014_04, indy_20170127_03]   # Day-0'dan +2, +114, +219 gün (V7 ile aynı)
+  loco: [loco_20170216_02, loco_20170217_02, loco_20170227_04]   # +2, +3, +13 gün
+
+pre_primates:
+  indy: [indy_20160407_02, indy_20160411_01, indy_20160411_02, indy_20160418_01, indy_20160419_01, indy_20160420_01,
+         indy_20160426_01]   # Day-0'dan 57–76 gün önce
+  loco: [loco_20170210_03, loco_20170213_02]                      # 4 ve 1 gün önce
+
+ext_primates:
+  indy: [indy_20160627_01, indy_20160916_01, indy_20161006_02, indy_20161027_03, indy_20161207_02, indy_20170124_01]
+  loco: [loco_20170228_02, loco_20170302_02]
+
+multiday:                    # §12.8 Aşama 1b
+  epochs: 100                # ÖN + Day-0 ortak eğitim (Aşama 1 ile aynı bütçe)
+  finetune: full             # full | readout (omurga donuk); seçim yalnız AYAR oturumlarında (KR kaydıyla)
+  finetune_epochs: 150       # Day-0 ince ayarı (Aşama 2 ile aynı)
+  finetune_lr: 1.0e-3

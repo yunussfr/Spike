@@ -1,0 +1,19 @@
+# Faz V8 (KR-051): iki omurga kolu, aynı augmentation ve aynı donanımla (§12.8 Aşama 1b, §12.21).
+#   multiday — ÖN + Day-0 (Day-0 istatistikleriyle) → Day-0 ince ayarı → W_0     (kol M)
+#   day0     — yalnız Day-0                                                     (kol S)
+# Koşu (hayvan × seed ayrı süreç, KR-043):
+#   uv run python experiments/v2_pretrain.py --config configs/v2_pretrain_v8.yaml --primates indy --seeds 100
+base: v2_v8.yaml
+
+experiment:
+  name: v2_pretrain_v8
+
+augment:                     # V7 ile aynı (§12.19); iki kolda da açık
+  enabled: true
+  p_drop: 0.5
+  k_max_frac: 0.2
+  p_gain: 0.5
+  sigma_gain: 0.2
+  sigma_bias: 0.2
+
+stages: [multiday, day0]
