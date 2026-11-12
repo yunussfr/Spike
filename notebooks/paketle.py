@@ -9,6 +9,8 @@ defter bu dosyayı her koşu klasörüne kopyalar (KV8: kod sürümü kaydı).
 Kullanım (depo kökünden):
     uv run python notebooks/paketle.py            # ikisi
     uv run python notebooks/paketle.py --yalniz-kod   # yalnız kod (veri bir kez yüklenir)
+    uv run python notebooks/paketle.py --config configs/v2_v8.yaml --roller   # V8: tüm rol oturumlarının yerelde
+        # bulunan önbellekleri (+ görev durumu `_task.pt`); eksikleri notebooks/v8_veri.ipynb Colab'da üretir
 """
 
 import argparse
@@ -53,16 +55,32 @@ def kod_dosyalari() -> list[Path]:
     return out
 
 
-def veri_dosyalari() -> list[Path]:
-    """Rapor eğitiminin okuduğu oturumlar: configs/v2_base.yaml `primates` (test protokolü), 4 ms önbellek."""
-    cfg = yaml.safe_load((KOK / "configs/v2_base.yaml").read_text(encoding="utf-8"))
+def veri_dosyalari(config: str = "configs/v2_base.yaml", roller: bool = False) -> list[Path]:
+    """Rapor eğitiminin okuduğu oturumlar: config'in `primates`'i (test protokolü), 4 ms önbellek.
+
+    roller = True (V8): tüm rol oturumları (ÖN, Day-0, AYAR, TEST, EK); yerelde olmayanlar atlanır ve listelenir
+    (Colab'da notebooks/v8_veri.ipynb üretir), görev durumu önbelleği (`_task.pt`) varsa eklenir."""
+    sys.path.insert(0, str(KOK))
+    from src.utils.config import load_config
+    from src.v2.data import check_roles, session_roles
+
+    cfg = load_config(KOK / config)
     d = cfg["data"]
     tag = f"b{round(d['bin_width'] * 1000)}_s{round(d['stride'] * 1000)}_r{d['train_ratio']}"
-    names = [n for ns in cfg["primates"].values() for n in ns]
+    if roller:
+        check_roles(cfg)
+        names = [n for p in cfg["primates"] for n in session_roles(cfg, p).all()]
+    else:
+        names = [n for ns in cfg["primates"].values() for n in ns]
     files = [KOK / d["cache_dir"] / f"{n}_{tag}.pt" for n in names]
     eksik = [f.name for f in files if not f.exists()]
-    if eksik:
+    if eksik and not roller:
         sys.exit(f"Önbellek eksik: {eksik}. Önce yerelde bir kez yükleyin (ör. pytest ya da indirme betiği).")
+    if eksik:
+        print(f"[bilgi] yerelde yok, Colab'da üretilecek ({len(eksik)}): {', '.join(eksik)}")
+    files = [f for f in files if f.exists()]
+    if roller:
+        files += [t for f in files if (t := f.with_name(f.stem + "_task.pt")).exists()]
     return files
 
 
@@ -80,6 +98,8 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--yalniz-kod", action="store_true")
     p.add_argument("--cikis", default=str(KOK / "notebooks" / "paket"))
+    p.add_argument("--config", default="configs/v2_base.yaml", help="veri paketinin oturumları bu config'ten")
+    p.add_argument("--roller", action="store_true", help="V8: tüm rol oturumları (eksikler Colab'da üretilir)")
     a = p.parse_args()
     out = Path(a.cikis)
     kod = kod_dosyalari()
@@ -89,7 +109,7 @@ def main() -> None:
              "dosya_sha256": {f.relative_to(KOK).as_posix(): sha256(f) for f in kod}}
     yaz(out / "spike_kod.zip", kod, {"KOD_SURUMU.json": json.dumps(surum, ensure_ascii=False, indent=1)})
     if not a.yalniz_kod:
-        yaz(out / "spike_veri.zip", veri_dosyalari())
+        yaz(out / "spike_veri.zip", veri_dosyalari(a.config, a.roller))
     print(f"\nDrive'a yükle: {out}  →  Drive'ım/Spike_colab/")
 
 

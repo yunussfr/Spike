@@ -1,4 +1,4 @@
-# Colab defterleri (Faz V7)
+# Colab defterleri (Faz V7 ve V8)
 
 Bu klasör, uzun GPU eğitimlerini Google Colab'da koşturmak için gereken her şeyi tutar. Kodun asıl hali depodadır;
 Colab'a yalnızca bir zip kopyası gider. Sonuçlar Drive üzerinden geri gelir.
@@ -8,6 +8,9 @@ Colab'a yalnızca bir zip kopyası gider. Sonuçlar Drive üzerinden geri gelir.
 | `paketle.py` | Kodu ve veri önbelleğini `notebooks/paket/` altına iki zip olarak koyar |
 | `v7_rapor_egitimi_indy.ipynb` | Indy rapor modelleri (seed 0–4): ön-eğitim + ince ayar + Day-0 |
 | `v7_rapor_egitimi_loco.ipynb` | Loco için aynısı |
+| `v8_veri.ipynb` | V8: rol oturumlarını indirir, önbellek üretir, denetimi (Adım 0) koşar |
+| `v8_egitim.ipynb` | V8: bir hayvan için kol M (`multiday`) ve kol S (`day0`) omurgaları |
+| `v8_cevrimici.ipynb` | V8: V7 çevrimiçi sistemi × S / M, M − S tablosu |
 | `paket/` | Üretilen zip'ler (git'e girmez) |
 
 İki defter aynı koddur, yalnız `PRIMAT` ayarı farklıdır. İkisi iki ayrı Colab sekmesinde aynı anda koşabilir.
@@ -108,3 +111,43 @@ Rapor eğitimine başlamadan önce yerel ayar zincirinin ilk modelinin (Indy see
 `runs/v7_tune_day0.log` içinde `"stage": "day0"` satırı, `indy_20160622_01`, `val_r2`. V6'da (augmentation'sız)
 seed 100–102: Indy 0,769 / 0,770 / 0,787, Loco 0,706 / 0,719 / 0,713. Augmentation bunu belirgin düşürüyorsa
 (ör. Indy < 0,74), Colab saatlerini harcamadan önce birlikte karar verelim.
+
+---
+
+# Faz V8 (KR-051): çoklu-gün omurgası
+
+Kurallar ARCHITECTURE.md §12.21, plan `docs/PlanV8.md`. Drive klasörü aynı: `Drive'ım/Spike_colab/`. V8 çıktıları
+V7'ninkilerle karışmasın diye ayrı alt klasörlere yazılır: `cache/`, `runs_v8/`, `runs_v8_online/`, `v8_tablolar/`.
+
+## Sıra
+
+| # | Defter | Ayar | Çıktı | Süre (yaklaşık) |
+|---|---|---|---|---|
+| 1 | `v8_veri.ipynb` | CPU yeter | `cache/` (tüm rol oturumları), `v8_audit.md` | 30–60 dk |
+| 2 | `v8_egitim.ipynb` | `HAYVAN`, `KIP = "ayar"`, `FINETUNE = "full"` | `runs_v8/` (seed 100–102, M ve S) | hayvan başına birkaç saat |
+| 2b | `v8_egitim.ipynb` | `FINETUNE = "readout"` | M'nin omurga-donuk varyantı | M kadar |
+| 3 | `v8_cevrimici.ipynb` | `PROTOKOL = "tune"` | ayar tablosu; burada `multiday.finetune` ve öteki ayarlar seçilir | hayvan başına birkaç saat |
+| 4 | `v8_egitim.ipynb` | `KIP = "rapor"`, seçilen `FINETUNE` | seed 0–4 | hayvan başına birkaç saat |
+| 5 | `v8_cevrimici.ipynb` | `PROTOKOL = "test"`, sonra `"ext"` | rapor tabloları | hayvan başına birkaç saat |
+
+Her hayvan (`indy`, `loco`) kendi sekmesinde koşar; iki sekme paralel çalışabilir. S ve M **aynı GPU türünde**
+(L4) koşmalı; farklı GPU'da sayılar birebir tutmaz.
+
+## Hazırlık (bilgisayarında)
+
+```bash
+uv run python notebooks/paketle.py --config configs/v2_v8.yaml --roller
+```
+
+`spike_kod.zip` ve `spike_veri.zip`'i `Drive'ım/Spike_colab/` içine yükle (eskilerinin üzerine). Yerelde olmayan
+önbellekleri `v8_veri.ipynb` Colab'da üretir; bilgisayarına 12 GB indirmen gerekmez.
+
+Dryad için: https://doi.org/10.5061/dryad.xd2547dkt sayfasından en az `Chewie_CO_20150630.mat` (167 MB) indir ve
+`Drive'ım/Spike_colab/dryad/` içine koy. Dryad yükleyicisi denetim raporu görüldükten sonra yazılacak.
+
+## Durma noktaları (Claude'a getir)
+
+1. **Denetimden sonra** (`v8_audit.md`): ÖN oturumlarında `kanal düzeni FARKLI` varsa eğitime geçme.
+2. **Ayar eğitiminden sonra**: Day-0 val R² iki kolda yakın mı (Indy ≈ 0,77)? Augmentation ya da ÖN, Day-0'ı
+   belirgin düşürdüyse rapor eğitimine geçmeden karar verelim.
+3. **Ayar tablosundan sonra**: `multiday.finetune` seçimi ve KR kaydı; ancak ondan sonra rapor seed'leri.
