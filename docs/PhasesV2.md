@@ -216,6 +216,32 @@ Kurallar:
 
 ---
 
+## Faz V8 — Çoklu-gün omurgası, hayvan başına oturum rolleri, ikinci veri seti (KR-051)  ⏳ Kod hazır (Dryad yükleyicisi denetimden sonra), koşu bekliyor
+
+**Hedef:** Omurga tek günün (Day-0) kanal profilini ezberliyor mu? Gerçek geçmiş günlerle (ÖN) eğitilen omurga (M) ile yalnız Day-0 omurgası (S) aynı V7 çevrimiçi sistemiyle (ReFIT, BOCPD, ölü kanal, Degenhart, beyincik, duygu uzayı) karşılaştırılır. Plan: `docs/PlanV8.md`; kurallar §12.21.
+
+**Roller:** Indy ÖN 7 oturum (2016-04), Day-0 0622, AYAR değişmez, TEST 0630 / 20170131 + EK 6 oturum. Loco ÖN 0210 / 0213, Day-0 0214, AYAR 0216 / 0217 / 0227, TEST 0215 / 0301 + EK 0228 / 0302. Dryad (Chewie, Mihili, Han, Lando) ayarsız; roller denetimden sonra.
+
+**Adımlar:**
+0. Denetim (`scripts/audit_sessions.py` → `results/v8/audit.md`): ÖN oturumlarının kanal düzeni Day-0 ile aynı mı; Dryad dosya yapısı. Kapı: rol tablosu burada kesinleşir.
+1. Veri: `session_roles` / `check_roles`, `--only pre | ext` indirme; Dryad yükleyicisi (denetimden sonra) ve parça içi hız türevi.
+2. Eğitim: `experiments/v2_pretrain.py` `multiday` aşaması (`configs/v2_pretrain_v8.yaml`), `day0` kolu aynı config'le.
+3. Çevrimiçi: `experiments/v2_v7.py --config configs/v2_v8.yaml --ckpt-stage day0 | multiday --protocol tune | test | ext`.
+4. Tablolar: `scripts/make_tables_v2.py --backbones` (M − S oturum eşli).
+5. Colab: `notebooks/v8_*.ipynb`.
+
+**Duman (2026-11-12, yerel):** diskteki Loco oturumlarıyla (Day-0 geçici 0213, ÖN 0210), 1 epoch: `multiday` + `day0` eğitimi ve `v2_v7.py` iki kolda (tüm V7 koşulları) ve `--backbones` tablosu uçtan uca çalıştı; testler 171/171.
+
+**Koşu sırası:** yerel duman (✓) → AYAR (seed 100–102, val; `multiday.finetune` ve Loco'nun yeni Day-0'ı) → rapor (seed 0–4, TEST + EK, S ve M aynı donanımda) → Dryad (ayarsız, seed 0–4).
+
+**Çıkış kriteri:**
+- Denetim raporu yazılmış; ÖN oturumlarının kanal uyumu belgelenmiş.
+- `multiday.finetune` seçimi yalnız AYAR oturumlarında, KR kaydıyla.
+- Birincil: oturum eşli M − S, A ve D7'de (Indy + Loco TEST), oturum birimli Wilcoxon + %95 GA, Holm. EK ve Dryad ayrı tablolarda.
+- Sonuç üç biçimden biri olarak yorumlanmış: (1) A ve D7 M'de yükselir, (2) yalnız A yükselir, (3) fark yok.
+
+---
+
 ## Faz özeti
 
 | Faz | Ana çıktı | Koşul |
@@ -228,3 +254,4 @@ Kurallar:
 | V5 | Beyincik v2 + duygu v2 + duygu-kapılı W_in, kalıcı sürpriz sensörü, dinamik duygu | C, D, W, L, R, P |
 | V6 | Kayma ve elektrot kaybı deneyi | A, B, P, C, D, E (+ Bg, Pg) |
 | V7 | BOCPD sensörü (CR), ölü kanal, Degenhart, sönümlü ReFIT, augmentation, tonik / fazik iş bölümü; oturum birimli istatistik, test dışı ayar | A, B7, R5, G7, P7, C7, D7 (+ ablasyonlar, beyincik ailesi) |
+| V8 | Çoklu-gün omurgası (ÖN + Day-0), hayvan başına oturum rolleri, EK test oturumları, Dryad dış doğrulaması | V7 ailesi × omurga S / M |

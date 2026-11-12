@@ -423,6 +423,7 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-12 | KV6, §12.8 (Aşama 1b `multiday`), §12.9 (omurga kolu S / M), yeni §12.21 (V8): hayvan başına oturum rolleri ÖN / Day-0 / AYAR / TEST / EK, rollerin ayrıklığı ve tarih sırası kodda zorunlu; ÖN oturumları Day-0 istatistikleriyle kodlanır; Loco'nun V8 Day-0'ı 2017-02-14; ikinci veri seti (Dryad xd2547dkt) ayarsız dış doğrulama, hız konumun parça içi merkezî farkı | KR-051: Day-0'da eğitilen donuk omurga Day-k'de A = −0,066; hipotez: omurga tek günün kanal profilini ezberliyor. Gerçek geçmiş günlerle (yalnız augmentation değil) test; sızıntısız nedensel bölme. Kullanıcı onayı (2026-11-11) |
 | 2026-11-10 | §12.16 BOCPD: tek boyutlu skor (kanal başına z²'nin ortalamasının logaritması) ve Day-0 rejimine dönüş (p_0); kaynak seçimi x / ar1 / cer_mon. Yeni §12.20: tonik / fazik iş bölümü — tonik arousal BOCPD (→ çapa gevşetme, λ_norm kapısı), fazik arousal plastik beyincik hatasının kopya tahminine oranı (→ η gazı, g). KV4 notu, §12.9 V7 koşulları ve ikincil (beyincik) aile, §12.11 | KR-050: teşhiste bugünkü BOCPD Day-0 ayrılmış dilimde her tavlamada %90–97 yanlış alarm verdi (dönüşsüz Day-0 rejimi + 96–192 kanalın bağımsız çarpımı); CR her kaynakta kalibre oldu. Beyincik sürprizi ‖e‖²/ε²_0 Indy'de ateşleme düşünce yeni günde azalıyordu; kopya oranı bunu düzeltti. Kullanıcı onayı (2026-11-10) |
 | 2026-11-09 | §12.1, KV3, KV4, KV6, §12.8, §12.9, §12.11; yeni §12.15–§12.19 (V7): sönümlü ReFIT niyet etiketi, BOCPD sensörü (arousal = P(rejim ≠ Day-0)), ölü kanal dedektörü, Degenhart hizalaması, kanal bozulması augmentation'ı; ayar oturumları test oturumlarından ayrı; istatistik birimi oturum, Holm tüm ailede, toparlanma Kaplan–Meier; v1 kodu `v1-final` tag'ine taşındı | KR-049: hakem raporu (sahte tekrar, ayar = test oturumu, D ≈ C, R5 elektrot kaybında üstün, literatür tabanları eksik) ve KR-046/048'deki 31 s tespit gecikmesi. Kullanıcı onayı (2026-11-09) |
 | 2026-11-08 | KV2, KV3, KV4, §12.6, §12.7, §12.9, §12.14: kalıcı sürpriz sensörü (yeniden ölçekleme kapısı); dinamik duygu: arousal (iç hata + başlık uyuşmazlığı, sabit Day-0 tabanı), valens (e_v eğilimi), dominans (e_v düzeyi) → gaz, fren, çapa gevşetme, akış içi çapa konsolidasyonu; yeni regülatörler α_anchor(t), c(t); yeni kontrol v2-P, v2-B ᾱ ile eşlenir, v2-C η, α, c dizilerini karıştırır; v2-E senaryosu tanımlandı | KR-046: kapalı döngü sönüyordu; kalıcı sensör ilk günü korudu. KR-047: Pf ≈ sabit yüksek η (duygu zamanlaması katkısız); valence = −a iken kurallar tek sinyale çöküyordu. Kullanıcı önerisi ve onayı (valens / dominans e_v'den) |
@@ -505,6 +506,7 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 - V7 istisnaları (KR-049), hepsi etiketsiz, nedensel ve referansları yalnızca Day-0 train'den: BOCPD sensörü (§12.16), ölü kanal dedektörü (§12.17), Degenhart hizalaması (§12.18; yeni günün FA'sı yalnızca akışın geçmiş girdisinden). Sensörün kalibrasyonu (tavlama, hazard) Day-0 train'in ayrılmış son diliminde ve ayar oturumlarında yapılır.
 - Niyet etiketi (§12.15) imleç ve hedef konumunu kullanır: gerçek BCI'da ekranda bilinen görev durumudur. Hız etiketi (y) kullanmaz; hız büyüklüğü dekoderin kendi çıktısından gelir.
 - **Ayar oturumları test oturumlarından ayrıdır (KR-049).** `tune_primates`'teki oturumlar `primates`'te (test) bulunamaz; çakışma hata verir. Day-0 modeli ayar ve testte aynıdır (yalnızca Day-0 train'de eğitilir).
+- **Oturum rolleri (V8, KR-051, §12.21).** Her hayvanın oturumları ÖN / Day-0 / AYAR / TEST / EK rollerinden yalnız birine aittir; ÖN tarihleri Day-0'dan önce, diğerleri sonradır; bir hayvanın listesinde başka hayvanın oturumu bulunamaz. İhlal hata verir (`check_roles`). ÖN oturumları omurga eğitiminde **Day-0'ın** kodlayıcı ve hedef istatistikleriyle kodlanır (Day-k ile aynı); kendi istatistikleri kullanılmaz.
 
 **KV7 — Ateşleme rejimi (k-WTA yerine homeostaz).**
 - v2 omurgasında k-WTA yoktur. Hedef ortalama oran ρ = 0,05 (config `target_rate`).
@@ -612,6 +614,7 @@ W^(k) ← (1 − α_anchor)·W^(k) + α_anchor·W_0^(k) + η(t)·e_v(t)·r̃^(k)
    - **Günler arası model (KR-040):** yalnızca Day-0'da eğitilir (ön-eğitim Day-k train dilimlerini gördüğü için kullanılmaz); Day-k, Day-0 istatistikleriyle kodlanır.
    - **Etiket kaynağı (V7, KR-049):** `online.label_source: delayed` (KR-041, 500 ms gecikmeli hız) ya da `refit` (§12.15, gecikmesiz sönümlü niyet etiketi). V7'nin varsayılanı `refit`; `delayed` ablasyon olarak raporlanır.
 4. **Kanal bozulması augmentation'ı (V7, KR-049, §12.19):** Aşama 1 ve 2'deki her eğitim penceresine, x_norm alanında rastgele kanal düşürme (kanal "sıfır sayım" değerine çekilir) ve kanal başına kazanç / kayma bozulması uygulanır. Yalnızca eğitimde; val seçimi ve akış bozulmasız veriyle yapılır.
+5. **Aşama 1b — Çoklu-gün omurgası (V8, KR-051, §12.21):** ÖN oturumları + Day-0'ın train pencereleri birlikte (`multiday.epochs`); hepsi Day-0 istatistikleriyle kodlanır; en iyi epoch bu oturumların val dilimlerinin ortalamasıyla. Ardından Day-0 ince ayarı (`multiday.finetune: full` tüm model, `readout` omurga donuk ve yalnız okuma) ve W_0 çapası. Checkpoint `multiday_<hayvan>_seed<s>.pt`. Karşılaştırma kolu `day0` aynı augmentation ve donanımla eğitilir.
 
 ### 12.9 Değerlendirme koşulları (v2)
 v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
@@ -650,6 +653,8 @@ v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
 | D7@kaynak, D7_split@kaynak | BOCPD öteki kaynakla (ar1 ↔ cer_mon, §12.16) | Beyincik artığının sensöre katkısı |
 
 - **İstatistik (V7, KR-049; hakem raporu):** birim **oturumdur**. Seed'ler önce oturum içinde ortalanır; oturum düzeyinde kesin Wilcoxon (n < 6'da ulaşılabilir en küçük p raporlanır) ve oturum → seed sıralı küme bootstrap'lı %95 güven aralığı. Seed × oturum birimli Wilcoxon yalnızca ek bilgi olarak verilir. Holm iki düzeyde: önceden kayıtlı birincil aile (D7 − P7, D7 − R5, D7 − C7, D7 − B7) ve tüm karşılaştırma ailesi. İkincil (beyincik) aile ayrı Holm'la ve keşifsel olarak raporlanır (KR-050): D7_split − D7_ph0, D7_split − D7_N0, D7@cer_mon − D7@ar1, D7_split − D7. Toparlanma süresi sansürlü veridir: Kaplan–Meier medyanı ve sansürlü birim sayısı raporlanır, ortalama ± std raporlanmaz.
+
+**V8 omurga kolu (KR-051).** V7 koşul ailesinin tamamı iki omurgada koşar: **S** (`day0` checkpoint'i, yalnız Day-0) ve **M** (`multiday`, ÖN + Day-0). Satırlarda `backbone: S | M`. Birincil V8 iddiası oturum eşli M − S (A ve D7'de); ikincil: D7 − A farkının M'de ve S'de büyüklüğü. İstatistik V7 ile aynı (oturum birimi, Holm). EK oturumları ayrı tabloda; Dryad ayrı tabloda, ayar yapılmadan.
 
 ### 12.10 Spesifikasyon notları ve açık noktalar
 Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt için; v2 kararlarını değiştirmez):
@@ -862,3 +867,28 @@ Yönlendirme (a_mode = split):
 - Beyincik yalnız e_cer ile güncellenir (KV3); η_cer sabittir, regülatör üretmez (KV4). Aralıklar §12.2'deki gibi. `regulators.enabled: false` her zaman çalışır (KV5).
 - a_mode = sensor (V6/V7 D7) ve internal / max biçimleri korunur; split yalnız yeni koşullarda (D7_split, D7_ph0, D7_N0). r_0, Day-0 tabanlarıyla (u_0, q_0) aynı dilimde ölçülür.
 - Parametreler `v7.phasic.*` ve `v7.cer_family` YAML'dan.
+
+### 12.21 Oturum rolleri, çoklu-gün omurgası ve ikinci veri seti (V8, KR-051)
+Amaç: omurganın tek günün kanal profilini ezberlemesini, **gerçek geçmiş günlerle** azaltmak ve bunu sızıntısız ölçmek.
+
+**Roller (hayvan başına, tarih sırasıyla):**
+
+| Rol | Kullanım | Kural |
+|---|---|---|
+| ÖN | çoklu-gün omurga eğitimi (yalnız train dilimi; val dilimi model seçimi) | tarih < Day-0 |
+| Day-0 | ince ayar, W_0, tüm çevrimiçi referanslar (BOCPD, FA, ölü kanal, beyincik, u_0 / q_0 / r_0) | tek oturum |
+| AYAR | hiperparametre seçimi (`--protocol tune`) | tarih > Day-0; TEST / EK'te yok |
+| TEST | rapor (`--protocol test`), NeuroBench oturumları | tarih > Day-0 |
+| EK | genişletilmiş rapor (`--protocol ext`), ayrı tablo; listesi sonuçlardan önce sabit | tarih > Day-0 |
+
+- Config: `primates` (Day-0 + TEST), `tune_primates`, `pre_primates`, `ext_primates`; dosyalar `data.files`, `tune_files`, `pre_files`, `ext_files`. `check_roles` ayrıklığı, tarih sırasını, hayvan önekini ve dosya listelerini denetler.
+- **Hayvan yalıtımı:** her hayvanın omurgası, kodlayıcı istatistikleri, checkpoint'i ve süreci ayrıdır; hayvanlar arası veri paylaşımı yoktur (kanallar arasında eşleşme yok).
+- **Loco (V8):** eski Day-0 (2017-02-10) ilk kayıt olduğu için V8'de Day-0 = 2017-02-14; ÖN 02-10, 02-13. V8 Loco sayıları V6 / V7 Loco sayılarıyla doğrudan karşılaştırılmaz; S kolu aynı Day-0 ile yeniden eğitilir.
+
+**Çoklu-gün eğitimi (§12.8 Aşama 1b):** ÖN oturumları `prepare_session(…, stats_from=Day-0)` ile kodlanır: test günü nasıl kodlanıyorsa öyle; böylece omurga eğitimde gerçek kaymayı görür. Pencereler oturum sınırını aşmaz. `multiday.finetune: readout` iken omurga parametreleri `requires_grad=False` ve optimizer yalnız okuma parametrelerini alır. Hangi ince ayar biçiminin kalacağı yalnız AYAR oturumlarında seçilir.
+
+**İkinci veri seti (Dryad xd2547dkt, CC0; Gallego-Carracedo vd. 2022):** 4 maymun (Chewie, Mihili, Han, Lando), center-out görevi, sıralanmış birimler, yalnız el konumu.
+- Birimler elektrot başına toplanır (sabit C); denemeler zaman sırasıyla eklenir; bölme 80/10/10 deneme sınırında.
+- Hız konumun **parça içi** merkezî farkıdır (deneme sınırını aşmaz; uçlarda tek yönlü fark), isteğe bağlı nedensel olmayan yumuşatma yalnız etiket üretiminde (`dryad.vel_smooth_ms`). NeuroBench de hızı konumun gradyanından alır.
+- Hiperparametreler Indy / Loco AYAR oturumlarında seçilir; Dryad'da hiçbir ayar yapılmaz (dış doğrulama). Han ve Lando (büyük olasılıkla S1) ayrı satırda raporlanır, ana iddiaya katılmaz.
+- Dosya yapısı (alanlar, kutu genişliği) `scripts/audit_sessions.py` denetiminden sonra kesinleşir; kutu 4 ms değilse Dryad kendi `time.dt_ms`'iyle koşar (zaman sabitleri ms cinsinden olduğu için aynı kalır).
