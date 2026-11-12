@@ -1,9 +1,13 @@
-"""V6 istatistikleri: kesin Wilcoxon işaretli sıra testi ve Holm düzeltmesi (ARCHITECTURE.md §12.9).
+"""v2 istatistikleri (ARCHITECTURE.md §12.9): kesin Wilcoxon işaretli sıra testi, Holm düzeltmesi ve V7'de
+(KR-049, hakem raporu) oturum birimli analiz: seed ortalaması, oturum → seed küme bootstrap'ı, Kaplan–Meier medyanı.
 
 scipy kurulu değil (kurulum kullanıcıda); n ≤ ~60 için kesin dağılım dinamik programlamayla hesaplanır.
 Sıfır farklar atılır (Wilcoxon "wilcox" kuralı); eşit |fark|'lara ortalama sıra verilir ve kesin dağılım bu sıra
 yapısına koşullu hesaplanır (sıralar ikiyle çarpılıp tamsayıya çevrilir).
 """
+
+from collections import defaultdict
+from typing import Hashable
 
 import numpy as np
 
@@ -57,3 +61,58 @@ def holm(p: list[float]) -> list[float]:
         run = max(run, min(1.0, (m - i) * p[j]))
         adj[j] = run
     return adj.tolist()
+
+
+def min_exact_p(n: int) -> float:
+    """n eşli farkta (bağ yok) kesin iki yönlü Wilcoxon'un ulaşabileceği en küçük p: 2 / 2ⁿ (n = 4 → 0,125)."""
+    return min(1.0, 2.0 / 2.0 ** n) if n > 0 else 1.0
+
+
+def session_means(units: list[tuple[Hashable, float]]) -> dict[Hashable, float]:
+    """(oturum, değer) birimleri (her seed bir birim) → oturum başına seed ortalaması."""
+    acc: dict[Hashable, list[float]] = defaultdict(list)
+    for s, v in units:
+        acc[s].append(float(v))
+    return {s: float(np.mean(v)) for s, v in acc.items()}
+
+
+def cluster_bootstrap_ci(units: list[tuple[Hashable, float]], n_boot: int, alpha: float,
+                         seed: int) -> tuple[float, float, float]:
+    """Hiyerarşik bootstrap: önce oturumlar, sonra seçilen her oturumun seed'leri yerine koyarak çekilir.
+
+    units: (oturum, fark) birimleri → (oturum-ortalaması-ortalama, alt sınır, üst sınır); yüzdelik %(1 − alpha) aralık."""
+    by: dict[Hashable, np.ndarray] = {}
+    acc: dict[Hashable, list[float]] = defaultdict(list)
+    for s, v in units:
+        acc[s].append(float(v))
+    for s, v in acc.items():
+        by[s] = np.asarray(v, dtype=np.float64)
+    keys = list(by)
+    if not keys:
+        return float("nan"), float("nan"), float("nan")
+    est = float(np.mean([by[k].mean() for k in keys]))
+    rng = np.random.default_rng(seed)
+    stats = np.empty(n_boot, dtype=np.float64)
+    for b in range(n_boot):
+        pick = rng.integers(0, len(keys), len(keys))
+        stats[b] = np.mean([rng.choice(by[keys[i]], len(by[keys[i]]), replace=True).mean() for i in pick])
+    lo, hi = np.quantile(stats, [alpha / 2.0, 1.0 - alpha / 2.0])
+    return est, float(lo), float(hi)
+
+
+def kaplan_meier_median(times: list[float], censored: list[bool]) -> float:
+    """Sağdan sansürlü süreler → Kaplan–Meier medyanı (S(t) ≤ 0,5 olduğu ilk olay zamanı); ulaşılmazsa inf.
+
+    Sansürlü birim: olay (toparlanma) gözlem penceresinde görülmedi; süresi yalnızca alt sınırdır."""
+    t = np.asarray(times, dtype=np.float64)
+    c = np.asarray(censored, dtype=bool)
+    if len(t) == 0:
+        return float("nan")
+    s = 1.0
+    for u in np.unique(t[~c]):                                               # olay zamanları, artan
+        at_risk = int((t >= u).sum())
+        events = int(((t == u) & ~c).sum())
+        s *= 1.0 - events / at_risk
+        if s <= 0.5:
+            return float(u)
+    return float("inf")

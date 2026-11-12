@@ -1,5 +1,7 @@
 # Faz V6 sonuçları (test)
 
+> **Not (KR-049):** Bu tablodaki p değerleri (oturum, seed) birimlidir. Seed'ler aynı verinin tekrarı olduğu için güven olduğundan yüksek görünür (sahte tekrar). Oturum birimli yeniden değerlendirme: [results/v6/table.md](../results/v6/table.md).
+
 Koşu klasörleri: runs\20261108-190451_v2_v6_test_seeds0, runs\20261108-191650_v2_v6_test_seeds0, runs\20261108-192914_v2_v6_test_seeds1, runs\20261108-194139_v2_v6_test_seeds1, runs\20261108-195201_v2_v6_test_seeds2, runs\20261108-200119_v2_v6_test_seeds2, runs\20261108-201055_v2_v6_test_seeds3, runs\20261108-202008_v2_v6_test_seeds3, runs\20261108-203139_v2_v6_test_seeds4, runs\20261108-204343_v2_v6_test_seeds4; seed [0, 1, 2, 3, 4]; birim (oturum, seed).
 
 ## Özet: koşul × grup (ort ± std)

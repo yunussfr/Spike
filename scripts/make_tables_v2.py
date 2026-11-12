@@ -1,11 +1,14 @@
-"""Faz V6 sonuç tabloları: koşu klasörlerini (experiments/v2_v6.py) birleştirir; senaryo × koşul tabloları, eşli
-karşılaştırmalar (kesin Wilcoxon + Holm), toparlanma süresi ve alt-popülasyon ateşleme oranı (KV7).
+"""Faz V6 / V7 sonuç tabloları: koşu klasörlerini (experiments/v2_v6.py, v2_v7.py) birleştirir; senaryo × koşul
+tabloları, eşli karşılaştırmalar, toparlanma süresi ve alt-popülasyon ateşleme oranı (KV7).
 
-Birim: (senaryo, oturum, seed). Ana iddia (§12.9): D > B (eşlenmiş), D > C (karıştırılmış), D > P (sensörlü
-yeniden ölçekleme + eşlenmiş sabit öğrenme); Holm düzeltmesi bu üç karşılaştırma üzerinde, grup başına.
+İstatistik (§12.9, KR-049): birincil birim **oturumdur**. Seed'ler oturum içinde ortalanır; oturum düzeyinde kesin
+Wilcoxon (ulaşılabilir en küçük p ile) ve oturum → seed küme bootstrap'lı %95 GA. (Oturum, seed) birimli Wilcoxon
+yalnızca ek bilgidir (seed'ler aynı verinin tekrarıdır, bağımsız değildir). Holm iki ailede: birincil iddialar
+(`--claims`) ve tüm karşılaştırmalar. Toparlanma süresi sansürlü: Kaplan–Meier medyanı ve sansürlü sayı.
 
 Kullanım:
-    uv run python scripts/make_tables_v2.py --runs runs/<v6 koşu 1> runs/<v6 koşu 2> ... --out runs/v6_summary
+    uv run python scripts/make_tables_v2.py --runs runs/<koşu 1> runs/<koşu 2> ... --out runs/v6_summary \\
+        [--export results/v6]   # birim satırları + tablo: depoya girecek özet
 """
 
 import argparse
@@ -17,7 +20,10 @@ from typing import Any, Callable
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.v2.stats import holm, wilcoxon_signed_rank  # noqa: E402
+from src.v2.stats import (cluster_bootstrap_ci, holm, kaplan_meier_median, min_exact_p,  # noqa: E402
+                          session_means, wilcoxon_signed_rank)
+
+N_BOOT, ALPHA, BOOT_SEED = 10000, 0.05, 0                                   # rapor ayarı (veriye bakmaz)
 
 NEUROBENCH = {"indy": {"SNN": 0.593, "ANN": 0.593}, "loco": {"SNN": 0.568, "ANN": 0.558}}   # arXiv 2304.04640, Tablo 4
 BAND = (0.02, 0.08)                                                          # KV7 homeostatik bant
@@ -48,6 +54,14 @@ def ms(v: list[float]) -> str:
     return f"{np.mean(v):.3f} ± {np.std(v):.3f}" if v else "—"
 
 
+def km(rs: list[Row]) -> str:
+    """Toparlanma: Kaplan–Meier medyanı (sansürlü / n)."""
+    if not rs:
+        return "—"
+    med = kaplan_meier_median([r["rec_s"] for r in rs], [bool(r["rec_censored"]) for r in rs])
+    return f"KM med {med:.1f} ({sum(bool(r['rec_censored']) for r in rs)}/{len(rs)} sansürlü)"
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--runs", nargs="+", required=True)
@@ -55,6 +69,8 @@ def main() -> None:
     p.add_argument("--main", default="D")
     p.add_argument("--claims", nargs="*", default=None, help="Holm'a giren karşılaştırmalar (varsayılan Bm_D C_D P_D)")
     p.add_argument("--extra", nargs="*", default=["Pm3", "Pm", "B", "R5", "O"])
+    p.add_argument("--title", default="Faz V6")
+    p.add_argument("--export", default=None, help="birim satırları (rows.json) ve tablonun depoya kopyalanacağı klasör")
     a = p.parse_args()
     runs = [Path(r) for r in a.runs]
     rows = load(runs)
@@ -66,34 +82,49 @@ def main() -> None:
     seeds = sorted({r["seed"] for r in rows})
     by = {(key(r), r["cond"]): r for r in rows}
     split = json.loads((runs[0] / "inputs.json").read_text(encoding="utf-8")).get("split", "?")
-    L: list[str] = [f"# Faz V6 sonuçları ({split})", "",
-                    f"Koşu klasörleri: {', '.join(str(r) for r in runs)}; seed {seeds}; birim (oturum, seed).", ""]
+    L: list[str] = [f"# {a.title} sonuçları ({split})", "",
+                    f"Koşu klasörleri: {', '.join(r.name for r in runs)}; seed {seeds}. Birincil birim oturum "
+                    f"(seed ortalaması); (oturum, seed) birimleri ek bilgi.", ""]
 
-    # 1. özet
-    L += ["## Özet: koşul × grup (ort ± std)", "", "| Koşul | " + " | ".join(GROUPS) + " |", "|" + "---|" * (len(GROUPS) + 1)]
+    # 1. özet (birim ortalaması; toparlanma Kaplan–Meier)
+    L += ["## Özet: koşul × grup (ort ± std; toparlanmada Kaplan–Meier medyanı)", "",
+          "| Koşul | " + " | ".join(GROUPS) + " |", "|" + "---|" * (len(GROUPS) + 1)]
     for c in conds:
-        L.append(f"| {c} | " + " | ".join(ms([r[m] for r in rows if r["cond"] == c and f(r) and m in r])
-                                         for f, m, _ in GROUPS.values()) + " |")
+        cells = []
+        for f, m, _ in GROUPS.values():
+            rs = [r for r in rows if r["cond"] == c and f(r) and m in r]
+            cells.append(km(rs) if m == "rec_s" else ms([r[m] for r in rs]))
+        L.append(f"| {c} | " + " | ".join(cells) + " |")
 
-    # 2. eşli karşılaştırmalar
+    # 2. eşli karşılaştırmalar: oturum birimli (birincil) ve (oturum, seed) birimli (ek)
     L += ["", f"## Eşli karşılaştırmalar: {D} − X", "",
-          f"Fark ortalaması (toparlanmada X − {D}: pozitif = {D} daha hızlı), {D}'nin iyi olduğu birim / n, kesin Wilcoxon p "
-          f"(iki yönlü); Holm yalnızca {', '.join(claims)} üzerinde, grup başına.", "",
-          "| Grup | X | fark | kazanma | p | p (Holm) |", "|---|---|---|---|---|---|"]
+          f"Fark: oturum ortalamalarının ortalaması (toparlanmada X − {D}: pozitif = {D} daha hızlı). "
+          f"**Oturum düzeyi:** {D}'nin iyi olduğu oturum / n, kesin Wilcoxon p, bu n'de ulaşılabilir en küçük p, "
+          f"küme bootstrap %95 GA (oturum → seed, {N_BOOT} tekrar). Holm: birincil aile ({', '.join(claims)}) ve tüm aile. "
+          f"**Ek (oturum, seed):** kazanma ve p; seed'ler bağımsız olmadığı için güveni olduğundan yüksek gösterir.", "",
+          "| Grup | X | fark | %95 GA | oturum kazanma | p (oturum) | en küçük p | p Holm (birincil) | p Holm (tümü) "
+          "| kazanma (oturum, seed) | p (oturum, seed) |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for g, (f, m, hi) in GROUPS.items():
         stats = []
         for x in claims + [c for c in a.extra if c not in claims]:
-            ks = sorted({key(r) for r in rows if f(r) and r["cond"] == D and (key(r), x) in by})
+            ks = sorted({key(r) for r in rows if f(r) and r["cond"] == D and (key(r), x) in by and m in r})
             if not ks:
                 continue
-            d = np.array([(by[(k, D)][m] - by[(k, x)][m]) * (1 if hi else -1) for k in ks])
-            _, pv, _ = wilcoxon_signed_rank(d)
-            stats.append((x, d, pv))
-        ph = dict(zip([s[0] for s in stats if s[0] in claims], holm([s[2] for s in stats if s[0] in claims])))
-        for x, d, pv in stats:
-            L.append(f"| {g} | {x} | {d.mean():+.3f} | {int((d > 0).sum())}/{len(d)} | {pv:.4f} | "
-                     f"{ph[x]:.4f} |" if x in ph else f"| {g} | {x} | {d.mean():+.3f} | {int((d > 0).sum())}/{len(d)} | "
-                     f"{pv:.4f} | — |")
+            sign = 1.0 if hi else -1.0
+            units = [(k[1], (by[(k, D)][m] - by[(k, x)][m]) * sign) for k in ks]   # (oturum, fark)
+            d = np.array([u[1] for u in units])
+            ds = np.array(list(session_means(units).values()))
+            _, p_s, _ = wilcoxon_signed_rank(ds)
+            _, p_u, _ = wilcoxon_signed_rank(d)
+            est, lo, up = cluster_bootstrap_ci(units, N_BOOT, ALPHA, BOOT_SEED)
+            stats.append((x, d, ds, p_s, p_u, est, lo, up))
+        prim = [t for t in stats if t[0] in claims]
+        ph = dict(zip([t[0] for t in prim], holm([t[3] for t in prim])))
+        pa = dict(zip([t[0] for t in stats], holm([t[3] for t in stats])))
+        for x, d, ds, p_s, p_u, est, lo, up in stats:
+            hp = f"{ph[x]:.3f}" if x in ph else "—"
+            L.append(f"| {g} | {x} | {est:+.3f} | [{lo:+.3f}, {up:+.3f}] | {int((ds > 0).sum())}/{len(ds)} | {p_s:.3f} | "
+                     f"{min_exact_p(len(ds)):.3f} | {hp} | {pa[x]:.3f} | {int((d > 0).sum())}/{len(d)} | {p_u:.4f} |")
 
     # 3. oturum × koşul
     for sc in dict.fromkeys(r["scenario"] for r in rows):
@@ -104,14 +135,11 @@ def main() -> None:
             L.append(f"| {se} | " + " | ".join(ms([r[m] for r in rows if r["scenario"] == sc and r["session"] == se
                                                   and r["cond"] == c]) for c in conds) + " |")
         if sc == "electrode":
-            L += ["", "| Oturum | " + " | ".join(f"{c} toparlanma s (sansürlü)" for c in conds) + " |",
+            L += ["", "| Oturum | " + " | ".join(f"{c} toparlanma s" for c in conds) + " |",
                   "|" + "---|" * (len(conds) + 1)]
             for se in dict.fromkeys(r["session"] for r in rows if r["scenario"] == sc):
-                cells = []
-                for c in conds:
-                    rs = [r for r in rows if r["scenario"] == sc and r["session"] == se and r["cond"] == c]
-                    cells.append(f"{np.mean([r['rec_s'] for r in rs]):.1f} ({sum(r['rec_censored'] for r in rs)}/{len(rs)})"
-                                 if rs else "—")
+                cells = [km([r for r in rows if r["scenario"] == sc and r["session"] == se and r["cond"] == c])
+                         for c in conds]
                 L.append(f"| {se} | " + " | ".join(cells) + " |")
 
     # 4. primat ortalaması ve NeuroBench
@@ -134,6 +162,11 @@ def main() -> None:
     L += ["", "NeuroBench: arXiv 2304.04640 Tablo 4 (4 ms, 75/25 bölme); biz 4 ms, 80/10/10 (KR-035)."]
     text = "\n".join(L) + "\n"
     (out / "table_v6.md").write_text(text, encoding="utf-8")
+    if a.export:                                                             # depoya girecek özet (runs/ git dışı)
+        ex = Path(a.export)
+        ex.mkdir(parents=True, exist_ok=True)
+        (ex / "table.md").write_text(text, encoding="utf-8")
+        (ex / "rows.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     print(text)
 
