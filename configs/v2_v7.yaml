@@ -1,0 +1,68 @@
+# Faz V7 (KR-049): değişim noktası tespitiyle kapılanan girdi uyumu + sönümlü ReFIT (experiments/v2_v7.py).
+# ARCHITECTURE.md §12.15–§12.19. Ayar yalnızca ayar oturumlarında (`--protocol tune`, tune_primates; test oturumlarına
+# dokunmaz) ve ayar seed'leriyle; test koşusu seçilen değerlerle, rapor seed'leri (0–4), `--protocol test`.
+# Aşağıdaki sayılar başlangıç değerleridir (ARCHITECTURE §12.11); ayar koşusundan sonra KR kaydıyla güncellenir.
+base: v2_v6.yaml
+
+experiment:
+  name: v2_v7
+
+online:
+  label_delay_ms: 0.0        # ReFIT gecikmesiz (§12.15); D7_delay ablasyonu v7.delay_ms ile ayrı geçişte koşar
+
+refit:                       # sönümlü ReFIT niyet etiketi (§12.15)
+  damp_radius_mm: 20.0       # r_d: σ = 1 − exp(−ρ / r_d)
+  on_target_mm: 5.0          # r_on: hedefte etiket hızı 0
+  reaction_ms: 200.0         # hedef değişiminden sonra etiket yok (tepki süresi)
+  eps: 1.0e-6
+
+bocpd:                       # değişim noktası sensörü (§12.16; tek boyutlu skor + Day-0'a dönüş, KR-050)
+  source: ar1                # x | ar1 (blok düzeyinde kanal başına AR(1) yeniliği) | cer_mon (donuk beyincik artığı)
+  reentry_p0: 0.5            # değişim noktasından sonra Day-0 rejimine dönüş olasılığı (0: dönüşsüz, ilk biçim)
+  score_eps: 1.0e-3          # y = ln(ort_c z² + ε_y)
+  mon_fit_streams: 4         # cer_mon: W_b ridge dilimi (fit_steps) kaç paralel akışla toplanır
+  mon_streams: 16            # cer_mon: referans artığı (train) kaç paralel akışla
+  mon_piece_steps: 120000    # cer_mon: bellek için parça uzunluğu (adım)
+  block_ms: 200.0            # 4 ms'de 50 adım; graph_chunk (500) bunun katı olmalı
+  hazard_s: 600.0            # beklenen rejim süresi → H = blok / hazard
+  r_max: 512                 # koşu uzunluğu kesmesi (blok; ≈ 102 s, sonuncusu birikir)
+  temper: 0.1                # τ_T başlangıcı; akışta Day-0 train'in ayrılmış diliminde kalibre edilen değer kullanılır
+  temper_grid: [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]
+  calib_false_alarm: 0.01    # ayrılmış Day-0 dilimde a > 0,5 blok oranı üst sınırı
+  calib_frac: 0.2            # Day-0 train'in son %20'si kalibrasyona ayrılır (m, s² ilk %80'den)
+  kappa_new: 1.0             # yeni rejim Normal-Gamma önseli
+  alpha_new: 1.0
+  recent_s: 10.0             # n(t): son 10 s'de değişim olasılığı (loglanır)
+  var_floor: 1.0e-4
+  gate_lo: 0.5               # h = clamp((a − lo)/(hi − lo), 0, 1); a bir olasılık
+  gate_hi: 0.9
+
+dead:                        # ölü kanal dedektörü (§12.17)
+  alpha: 1.0e-6              # sessizlik olasılığı eşiği
+  tol: 1.0e-5                # x_norm = normalize(0) eşleşme toleransı
+
+align:                       # Degenhart hizalaması (§12.18)
+  q: 10
+  fa_bin_ms: 20.0
+  t_cal_s: 30.0
+  t_refit_s: 30.0
+  t_win_s: 300.0
+  stable_frac: 0.6
+  n_iter: 5
+  em_iters: 100
+  psi_floor: 1.0e-3
+  a_on: 0.5
+
+v7:
+  base_variant: D            # D7, v2_v6.yaml'daki dyn ayarlarını (v6.dyn + variants.D) BOCPD sensörüyle kullanır
+  ablations: [D7_nodead, D7_noalign]   # aynı geçişte; D7_delay ve D7@v6 ayrı geçişler
+  alt_sources: [cer_mon]     # geçiş 5: BOCPD bu kaynaklarla da (D7@<kaynak>, D7_split@<kaynak>); seçim kuralı §12.16
+  phasic:                    # fazik kol (§12.20, KR-050): plastik beyincik, kopya oranı
+    cer_eta: 3.0e-4          # beyincik NLMS adımı (ayar ızgarası {1e-4, 3e-4, 1e-3})
+    w_u: 0.0                 # fazik arousal'da başlık uyuşmazlığının ağırlığı (teşhis w_u = 0 ile)
+  cer_family:                # geçiş 1'e eklenen beyincik ailesi; dyn varyant ayarlarının üzerine yazılır
+    D7_split: {arousal: split, ph_norm: copy}                 # tonik (BOCPD) → α, λ_norm; fazik → η, g
+    D7_ph0: {arousal: split, ph_norm: copy, ph_on: false}     # fazik kol kapalı: plastik beyinciğin katkısı
+    D7_N0: {arousal: split, ph_norm: abs}                     # fazik kol eski normalizasyonla (‖e‖²/ε²_0)
+  delay_ms: 500.0            # D7_delay: KR-041'deki gecikmeli hız etiketi
+  claims: [B7, P7, C7, R5]   # birincil aile (Holm), scripts/make_tables_v2.py --main D7 --claims ...

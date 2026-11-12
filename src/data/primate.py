@@ -82,6 +82,34 @@ def load_session(cfg: dict[str, Any], name: str) -> Session:
     return Session(name=name, x=x, y=y, val_start=c["val_start"], test_start=c["test_start"])
 
 
+def load_task_state(cfg: dict[str, Any], name: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """İmleç ve hedef konumu (mm), oturum önbelleğiyle aynı ızgarada ve aynı gecikmeyle (V7 niyet etiketi, KR-049).
+
+    NeuroBench örnek i'yi .mat'ın t[i] sütunuyla eşler; önbellek ızgarası idx = 0, step, 2·step, … < n_raw.
+    → pos: [n, 2], target: [n, 2]; ayrı küçük önbellek (`<oturum>_task_<etiket>.pt`)."""
+    d = cfg["data"]
+    path = _cache_path(d, name)
+    if not path.exists():
+        build_cache(d, name)
+    tpath = path.with_name(path.stem + "_task.pt")
+    if not tpath.exists():
+        import h5py
+        n_raw = int(torch.load(path)["n_raw"])
+        step = int(round(d["stride"] / SAMPLING_RATE))
+        idx = np.arange(0, n_raw, step)
+        fname = name if name.endswith(".mat") else name + ".mat"
+        with h5py.File(Path(d["dir"]) / fname, "r") as f:
+            pos = torch.from_numpy(f["cursor_pos"][()][:, idx].T.copy()).float()
+            tgt = torch.from_numpy(f["target_pos"][()][:, idx].T.copy()).float()
+        torch.save({"pos": pos, "target": tgt}, tpath)
+    c = torch.load(tpath)
+    pos, tgt = c["pos"], c["target"]
+    delay = d["biological_delay"]
+    if delay > 0:                                                            # y ile aynı kaydırma (görev durumu y tarafında)
+        pos, tgt = pos[delay:], tgt[delay:]
+    return pos, tgt
+
+
 def channel_scale(x_train: torch.Tensor, percentile: float) -> torch.Tensor:
     """Kanal başına ölçek: train sayımlarının yüzdeliği; hiç ateşlemeyen kanalda max ya da 1. [n, D] → [D]"""
     q = torch.from_numpy(np.percentile(x_train.numpy(), percentile, axis=0)).float()  # [D] (torch.quantile büyük girdide hata verir)

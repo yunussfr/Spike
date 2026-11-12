@@ -128,3 +128,30 @@ def test_save_anchor_and_stats_from() -> None:
     pb_a = prepare_session(cfg, b, torch.device("cpu"), stats_from=a)
     pa = prepare_session(cfg, a, torch.device("cpu"))
     assert torch.equal(pb_a.y_mu, pa.y_mu) and not torch.equal(pb_own.y_mu, pa.y_mu)
+
+
+def test_augmentation_in_training_only() -> None:
+    """§12.19 (KR-049): augmentation kapalıyken eğitim aynı; açıkken farklı; val seçimi bozulmasız veriyle ve z0 doğru."""
+    cfg = small_cfg()
+    cfg["train"].update(cuda_graph=False, epochs=2, eval_every=1, patience=100)
+    p = prepare_session(cfg, fake_session(), torch.device("cpu"))
+    assert torch.allclose(p.z0, prepare_session(cfg, fake_session(), torch.device("cpu")).z0)
+    raw0 = torch.zeros(1, 5)
+    from src.v2.encoder import SpikeEncoderV2
+    enc = SpikeEncoderV2.from_config(cfg, 5)
+    enc.fit(fake_session().x[:400])
+    assert torch.allclose(p.z0, enc.normalize(raw0)[0])
+
+    def go(aug: dict | None) -> dict:
+        c = copy.deepcopy(cfg)
+        if aug is not None:
+            c["augment"] = aug
+        torch.manual_seed(0)
+        m = V2Model(c, 5, 2, "plif")
+        return train_model(m, p, c, 0, metric).state
+
+    off = go({"enabled": False})
+    base = go(None)
+    on = go({"enabled": True, "p_drop": 1.0, "k_max_frac": 0.4, "p_gain": 1.0, "sigma_gain": 0.3, "sigma_bias": 0.3})
+    assert all(torch.equal(off[k], base[k]) for k in off)
+    assert any(not torch.equal(off[k], on[k]) for k in off if off[k].is_floating_point())

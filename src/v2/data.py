@@ -62,8 +62,24 @@ def session_date(name: str) -> date:
     return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
 
 
-def crossday_sessions(cfg: dict[str, Any], primate: str) -> tuple[str, list[str]]:
-    """Primatın oturumları tarih sırasıyla; ilki Day-0, kalanlar Day-k. → (day0, [day1, …])"""
+def check_tune_disjoint(cfg: dict[str, Any]) -> None:
+    """Ayar oturumları (`tune_primates`) test oturumlarından (`primates`) ayrı olmalı (KV6, KR-049).
+
+    Ayar listesinin Day-0'ı yoktur: Day-0 modeli test protokolündekiyle aynıdır (primates[p][0], yalnız train'i)."""
+    tune = cfg.get("tune_primates") or {}
+    test = {n for names in cfg["primates"].values() for n in names}
+    clash = sorted({n for names in tune.values() for n in names} & test)
+    if clash:
+        raise ValueError(f"ayar oturumları test oturumlarıyla çakışıyor: {clash}")
+    unknown = [p for p in tune if p not in cfg["primates"]]
+    if unknown:
+        raise ValueError(f"tune_primates'te primates'te olmayan primat: {unknown}")
+
+
+def crossday_sessions(cfg: dict[str, Any], primate: str, tune: bool = False) -> tuple[str, list[str]]:
+    """Primatın oturumları tarih sırasıyla; ilki Day-0, kalanlar Day-k. → (day0, [day1, …])
+
+    tune = True: Day-0 aynı, Day-k'ler ayar oturumları (`tune_primates`, test dışı; KR-049)."""
     names = list(cfg["primates"][primate])
     dates = [session_date(n) for n in names]
     if dates != sorted(dates) or len(set(dates)) != len(dates):
@@ -71,4 +87,14 @@ def crossday_sessions(cfg: dict[str, Any], primate: str) -> tuple[str, list[str]
     missing = [n for n in names if n not in cfg["data"]["files"]]
     if missing:
         raise ValueError(f"primates.{primate} data.files'ta olmayan oturum içeriyor: {missing}")
-    return names[0], names[1:]
+    if not tune:
+        return names[0], names[1:]
+    check_tune_disjoint(cfg)
+    tn = list((cfg.get("tune_primates") or {}).get(primate, []))
+    td = [session_date(n) for n in tn]
+    if not tn or td != sorted(td) or min(td) <= dates[0]:
+        raise ValueError(f"tune_primates.{primate} boş, tarih sırasında değil ya da Day-0'dan önce: {tn}")
+    missing = [n for n in tn if n not in cfg["data"].get("tune_files", [])]
+    if missing:
+        raise ValueError(f"tune_primates.{primate} data.tune_files'ta olmayan oturum içeriyor: {missing}")
+    return names[0], tn

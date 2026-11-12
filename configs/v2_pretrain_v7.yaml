@@ -1,0 +1,14 @@
+# Faz V7 (KR-049): V3 protokolü (ön-eğitim + ince ayar + Day-0) kanal bozulması augmentation'ıyla (§12.19).
+# Koşu: experiments/v2_pretrain.py --config configs/v2_pretrain_v7.yaml (V3 ile aynı süreç başına düzen, KR-043).
+base: v2_pretrain.yaml
+
+experiment:
+  name: v2_pretrain_v7
+
+augment:
+  enabled: true
+  p_drop: 0.5                # pencere başına kanal düşürme olasılığı
+  k_max_frac: 0.2            # en çok ⌈0,2·C⌉ kanal (elektrot kaybı senaryosu: Indy 20/96, Loco 20/192)
+  p_gain: 0.5                # pencere başına kanal kazanç / kayma bozulması olasılığı
+  sigma_gain: 0.2
+  sigma_bias: 0.2

@@ -105,14 +105,17 @@ class Ctx:
     def dyn_params(self, name: str) -> dict[str, Any]:
         return {**self.v6["dyn"], **self.v6["variants"][name]}
 
-    def dyn_cond(self, name: str, variant: str, **kw: Any) -> Condition:
-        p = self.dyn_params(variant)
+    def dyn_cond(self, name: str, variant: str, over: dict[str, Any] | None = None, **kw: Any) -> Condition:
+        """over: varyant ayarlarının üzerine yazılanlar (V7 beyincik ailesi, §12.20). ph_norm / ph_on verilmezse §12.6
+        biçimi (‖e‖²/ε²_0, fazik kol açık) — V6 davranışı."""
+        p = {**self.dyn_params(variant), **(over or {})}
         spec = DynSpec(w_u=float(p["w_u"]), lam_a=self.lam(p["tau_arousal_s"]), lam_f=self.lam(p["tau_vfast_s"]),
                        lam_m=self.lam(p["tau_vmid_s"]), lam_d=self.lam(p["tau_dom_s"]), rho_v=float(p["rho_v"]),
                        alpha_b=self.lam(p["tau_brake_s"]), lam_c=self.lam(p["tau_cons_s"]), delta_m=float(p["delta_m"]),
                        gas=bool(p.get("gas", True)), brake=bool(p.get("brake", True)),
                        loosen=bool(p.get("loosen", True)), consolidate=bool(p.get("consolidate", True)),
-                       a_mode={"internal": 0, "sensor": 1, "max": 2}[p["arousal"]], gas_dom=bool(p["gas_dom"]))
+                       a_mode={"internal": 0, "sensor": 1, "max": 2, "split": 3}[p["arousal"]], gas_dom=bool(p["gas_dom"]),
+                       ph_norm={"abs": 0, "copy": 1}[p.get("ph_norm", "abs")], ph_on=bool(p.get("ph_on", True)))
         base = dict(eta0=self.eta0 * float(p["eta_scale"]), gate=bool(p.get("gate", True)),
                     alpha_eta=float(p.get("alpha_eta", self.af["alpha_eta"])), cer_raw=False, cer_eta=float(p["cer_eta"]),
                     cer_src=-1, dyn=spec, **self.sensor_kw())

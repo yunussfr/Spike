@@ -78,10 +78,35 @@ class AffectDynamics:
         self.v = torch.zeros(E, device=dev)
         self.d = torch.zeros(E, device=dev)
 
-    def update_arousal(self, s_int: torch.Tensor, u: torch.Tensor, mt: torch.Tensor) -> torch.Tensor:
-        """s_int, u: [E] Day-0 tabanına göre (taban 1); mt: [] maske → a: [E] (yerinde)."""
-        mix = (1.0 - self.w_u) * s_int + self.w_u * u
-        self.e_a.add_((self.lam_a * mt) * (mix - self.e_a))
+    def set_internal(self, copy_norm: torch.Tensor, scale: torch.Tensor, k0: torch.Tensor) -> None:
+        """İç (fazik) sürprizin normalizasyonu (§12.20, KR-050); hepsi [E].
+
+        copy_norm 0: s = EMA(e²) / scale  (scale = ε²_0, §12.6 biçimi);
+        copy_norm 1: s = EMA(e²) / (EMA(Δx̄²)·scale)  (scale = r_0, kopya oranı; k0 = Day-0 ort. Δx̄²).
+        Başlangıçta s = 1 (Day-0 tabanı)."""
+        self.copy = copy_norm
+        self.scale = scale
+        self.k_e = torch.where(copy_norm > 0, k0, torch.ones_like(k0))
+        self.n_e = self.k_e * scale
+        self.u_e = torch.ones_like(k0)
+
+    def update_arousal(self, s_int: torch.Tensor, u: torch.Tensor, mt: torch.Tensor,
+                       d1: torch.Tensor | None = None) -> torch.Tensor:
+        """u: [E] Day-0 tabanına göre (taban 1); mt: [] maske → a: [E] (yerinde).
+
+        d1 None: s_int [E] zaten tabana bölünmüş iç hata (§12.6): E_a ← E_a + λ_a((1 − w_u)s_int + w_u u − E_a).
+        d1 [E] verilirse (set_internal sonrası): s_int = ham ort. e², d1 = ort. (x̄(t) − x̄(t−1))²; EMA'lar ayrı tutulur ve
+        E_a = (1 − w_u)·EMA(e²)/(EMA(Δx̄²)·scale) + w_u·EMA(u) (kopya oranında) ya da EMA(e²)/scale (§12.6 ile aynı)."""
+        if d1 is None:
+            mix = (1.0 - self.w_u) * s_int + self.w_u * u
+            self.e_a.add_((self.lam_a * mt) * (mix - self.e_a))
+        else:
+            la = self.lam_a * mt
+            self.n_e.add_(la * (s_int - self.n_e))
+            self.k_e.add_(la * self.copy * (d1 - self.k_e))
+            self.u_e.add_(la * (u - self.u_e))
+            s = self.n_e / (self.k_e.clamp(min=1e-12) * self.scale)
+            self.e_a.copy_((1.0 - self.w_u) * s + self.w_u * self.u_e)
         self.a.copy_(torch.tanh((self.e_a - 1.0) / (1.0 + self.eps)))
         return self.a
 
@@ -108,4 +133,19 @@ class AffectDynamics:
         g_amt = ap if gas_dom is None else ap * torch.where(gas_dom > 0, dn, torch.ones_like(dn))
         eta = eta0 * (1.0 + alpha_eta * g_amt * gas) * (1.0 - rho_v * vp).clamp(min=0.0) * (1.0 - b)
         alpha = alpha0 * (1.0 - ell) + alpha_b * b
+        return eta, alpha, b, c
+
+    @staticmethod
+    def routed_controls(a_eta: torch.Tensor, a_alpha: torch.Tensor, v: torch.Tensor, d: torch.Tensor, m: torch.Tensor,
+                        eta0: torch.Tensor, alpha_eta: torch.Tensor, rho_v: torch.Tensor, alpha0: torch.Tensor,
+                        alpha_b: torch.Tensor, gas: torch.Tensor, brake: torch.Tensor, loosen: torch.Tensor,
+                        consolidate: torch.Tensor, gas_dom: torch.Tensor | None = None
+                        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Tonik / fazik iş bölümü (§12.20): η a_eta'dan (fazik), α, fren, konsolidasyon a_alpha'dan (tonik).
+
+        a_eta = a_alpha ise `controls` ile aynıdır (fren ve konsolidasyon arousal'a bağlı değildir)."""
+        eta, _, _, _ = AffectDynamics.controls(a_eta, v, d, m, eta0, alpha_eta, rho_v, alpha0, alpha_b, gas, brake,
+                                               loosen, consolidate, gas_dom)
+        _, alpha, b, c = AffectDynamics.controls(a_alpha, v, d, m, eta0, alpha_eta, rho_v, alpha0, alpha_b, gas, brake,
+                                                 loosen, consolidate, gas_dom)
         return eta, alpha, b, c

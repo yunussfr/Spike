@@ -60,7 +60,7 @@ def main() -> None:
     seeds = a.seeds if a.seeds is not None else cfg["experiment"]["tune_seeds"]
     stages = a.stages or cfg["stages"]
     device = resolve_device(cfg["experiment"]["device"])
-    cfg["experiment"]["name"] = f"v2_pretrain_{'-'.join(primates)}"
+    cfg["experiment"]["name"] = f"{cfg['experiment']['name']}_{'-'.join(primates)}"   # v2_pretrain_<p>, V7: v2_pretrain_v7_<p>
     logger = RunLogger(cfg, seeds, a.config)
     ep_pre = a.epochs or cfg["pretrain"]["epochs"]
     ep_ft = a.epochs or cfg["finetune"]["epochs"]

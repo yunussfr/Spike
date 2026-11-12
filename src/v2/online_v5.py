@@ -32,178 +32,22 @@ Dinamik duygu (KR-047, `dyn` verilen koşul; `AffectDynamics`):
   - `alpha_anchor`: koşul başına sabit α (eşlenmiş kontroller); `alpha_seq` / `cons_seq`: v2-C dış dizileri.
 """
 
-import math
-from dataclasses import dataclass, field
-from typing import Any
-
 import torch
 
 from src.v2.affect import AffectDynamics, AffectSpaceV2
 from src.v2.cerebellum import CerebellumV2
+from src.v2.drift import Drift, DriftMonitor, drift_baseline, drift_series  # noqa: F401 (dışa aktarım)
 from src.v2.model import V2Model
 from src.v2.online import Controls
-
-
-@dataclass
-class DynSpec:
-    """Dinamik duygu parametreleri (KR-047); EMA adımları adım başına (λ = 1 − e^(−Δt/τ))."""
-    w_u: float                      # arousal karışımında başlık uyuşmazlığının ağırlığı
-    lam_a: float                    # arousal E_a adımı
-    lam_f: float                    # valens hızlı EMA
-    lam_m: float                    # valens orta EMA (λ_m < λ_f)
-    lam_d: float                    # dominans EMA
-    rho_v: float                    # rahatlamada η kısma: η·(1 − ρ_v·v⁺)
-    alpha_b: float                  # frende ek çapa adımı
-    lam_c: float                    # konsolidasyon adımı
-    delta_m: float                  # m = clamp(‖W − W_anc‖ / (δ_m·‖W_0‖), 0, 1)
-    gas: bool = True                # η'yı arousal'la aç
-    brake: bool = True
-    loosen: bool = True
-    consolidate: bool = True
-    a_mode: int = 0                 # kontrolü süren arousal: 0 iç (s_int + u), 1 sensör (kalıcı sürpriz), 2 ikisinin maks.
-    gas_dom: bool = False           # gaz a⁺·d⁻ (dominans düşükken)
-
-
-@dataclass
-class DynBase:
-    """Day-0 tabanları (donuk model, Day-0 train sonundaki ayrılmış dilim): başlık uyuşmazlığı u_0, okuma hatası q_0."""
-    u0: float
-    q0: float
-
-
-@dataclass
-class Condition:
-    """Bir akış koşulu (§12.9). affect = False → η, η_in, λ_norm sabit (η_0, η_in,0, λ_calm), g = 1 (KV5).
-
-    renorm = True → §12.14 kanal yeniden ölçeklemesi; λ_norm = λ_calm + (λ_surp − λ_calm)·max(0, a) (affect açıksa).
-    *_seq verilirse (v2-C) skorlanan adımlarda η, η_in, λ_norm bu dizilerden gelir.
-    """
-    name: str
-    eta0: float = 0.0
-    eta_in0: float = 0.0
-    affect: bool = False
-    gate: bool = False
-    alpha_eta: float = 0.0
-    renorm: bool = False
-    lam_calm: float = 0.0
-    lam_surp: float = 0.0
-    eta_seq: torch.Tensor | None = None        # [L]
-    eta_in_seq: torch.Tensor | None = None     # [L]
-    lam_seq: torch.Tensor | None = None        # [L]
-    cer_raw: bool = False                      # beyincik hedefi ham x̄ (yeniden ölçeklenmemiş)
-    cer_eta: float | None = None               # beyincik NLMS adımı (None → config; 0 → W_cer donuk)
-    cer_src: int = -1                          # φ kaynağı: −1 kendi yolu; i → i. koşulun izleri ve v̂'si
-    fixed_slow: bool = False                   # E_slow Day-0 tabanında sabit
-    a_fast: float | None = None                # E_fast adımı (None → config)
-    drift_w: float = 0.0                       # sürpriz karışımında girdi sapmasının ağırlığı
-    drift_max: bool = False                    # sürpriz = max(beyincik, sapma) ("biri alarm verirse"); w yok sayılır
-    gate_lo: float = 0.0                       # λ_norm kapısı h(a) = clamp((a − lo)/(hi − lo), 0, 1)
-    gate_hi: float = 1.0
-    lam_return: float = 0.0                    # (1 − h)·λ_ret ile m, v Day-0 referansına (m_0, v_0) çekilir
-    dyn: DynSpec | None = None                 # dinamik duygu (KR-047)
-    alpha_anchor: float | None = None          # sabit çapa adımı (None → akışın anchor_decay'i)
-    alpha_seq: torch.Tensor | None = None      # [L] v2-C: α(t) dış dizisi (dyn gerekli)
-    cons_seq: torch.Tensor | None = None       # [L] v2-C: konsolidasyon c(t) dış dizisi (dyn gerekli)
-
-
-@dataclass
-class Drift:
-    """Etiketsiz girdi sapması (KR-046): kanal EMA ortalaması / varyansının Day-0 train'e Gauss KL'si.
-
-        m ← m + λ_d·(x − m);   v ← v + λ_d·((x − m_önceki)² − v)          m, v: m_0, v_0'dan başlar
-        δ(t) = mean_c ½·[ρ − 1 − ln ρ + (m − m_0)² / v_0'],   ρ = max(v, v_f) / v_0',  v_0' = max(v_0, v_f)
-    δ_0: aynı ölçünün Day-0 train'deki ortalaması; sürprize δ/δ_0 girer (Day-0 tabanı 1).
-    """
-    lam: float
-    var_floor: float
-    delta0: float = 1.0
-
-
-class DriftMonitor:
-    def __init__(self, m0: torch.Tensor, v0: torch.Tensor, spec: Drift) -> None:
-        """m0, v0: [C] Day-0 train kanal ortalaması / varyansı."""
-        self.m0, self.lam, self.floor = m0, spec.lam, spec.var_floor
-        self.v0f = v0.clamp(min=spec.var_floor)                              # [C]
-        self.m = m0.clone()                                                  # [C]
-        self.v = v0.clone()
-
-    def step(self, xt: torch.Tensor, mt: torch.Tensor) -> torch.Tensor:
-        """xt: [C] ham x_norm, mt: [] maske → δ(t): [] (yerinde güncellenir)."""
-        dl = self.lam * mt
-        d = xt - self.m
-        self.m.add_(dl * d)
-        self.v.add_(dl * (d * d - self.v))
-        rho = self.v.clamp(min=self.floor) / self.v0f
-        return 0.5 * (rho - 1.0 - torch.log(rho) + (self.m - self.m0).pow(2) / self.v0f).mean()
-
-
-@torch.no_grad()
-def drift_series(x: torch.Tensor, start: int, stop: int, m0: torch.Tensor, v0: torch.Tensor, spec: Drift,
-                 block: int = 1024) -> torch.Tensor:
-    """`DriftMonitor`'un [start, stop) boyunca (maske 1) verdiği δ(t) dizisi, vektörleştirilmiş (float64).
-
-    Blok içinde kapalı form EMA: e_{a+k} = q^{k+1}·e_{a−1} + λ·q^k·Σ_{j≤k} q^{−j}·z_{a+j},  q = 1 − λ. → [T]"""
-    q, lam = 1.0 - spec.lam, spec.lam
-    m_prev, v_prev = m0.double().clone(), v0.double().clone()                # [C]
-    m0d, v0f = m0.double(), v0.double().clamp(min=spec.var_floor)
-    out = torch.empty(stop - start, dtype=torch.float64, device=x.device)
-    for a in range(start, stop, block):
-        z = x[a: min(a + block, stop)].double()                              # [n, C]
-        qk = (q ** torch.arange(len(z), device=x.device, dtype=torch.float64)).unsqueeze(1)   # [n, 1]
-        m = q * qk * m_prev + lam * qk * torch.cumsum(z / qk, 0)
-        mp = torch.cat([m_prev.unsqueeze(0), m[:-1]])                        # m_{t−1}
-        v = q * qk * v_prev + lam * qk * torch.cumsum((z - mp) ** 2 / qk, 0)
-        rho = v.clamp(min=spec.var_floor) / v0f
-        out[a - start: a - start + len(z)] = (0.5 * (rho - 1.0 - torch.log(rho) + (m - m0d) ** 2 / v0f)).mean(1)
-        m_prev, v_prev = m[-1], v[-1]
-    return out
-
-
-def drift_baseline(x: torch.Tensor, start: int, stop: int, m0: torch.Tensor, v0: torch.Tensor, spec: Drift,
-                   stat: str = "mean") -> float:
-    """Day-0 train'in [start, stop) aralığında δ (akıştaki gibi m_0, v_0'dan başlar) → δ_0.
-
-    stat = "mean": ortalama; "max": tolerans zarfı (Day-0 boyunca görülen en büyük sapma, KR-046). x: [n, C]"""
-    s = drift_series(x, start, stop, m0, v0, spec)
-    if stat not in ("mean", "max"):
-        raise ValueError(f"bilinmeyen taban istatistiği: {stat}")
-    return float(s.mean() if stat == "mean" else s.max())
-
-
-@dataclass
-class V5Result:
-    pred: torch.Tensor                    # [E, L, D] standart ölçek
-    rate: torch.Tensor                    # [E, N]
-    dw_rel: torch.Tensor                  # [E] ‖W − W_0‖ / ‖W_0‖ (okuma)
-    din_rel: torch.Tensor                 # [E] ‖W_in − W_in,0‖ / ‖W_in,0‖ akış sonu
-    din_max: torch.Tensor                 # [E] akış boyunca en büyük göreli sapma
-    a: torch.Tensor                       # [E, L] arousal
-    eta: torch.Tensor                     # [E, L]
-    eta_in: torch.Tensor                  # [E, L]
-    lam: torch.Tensor                     # [E, L] yeniden ölçekleme adımı λ_norm
-    extra: dict = field(default_factory=dict)
-
-
-@dataclass
-class Plasticity:
-    alpha_in: float
-    delta_max: float
-    kappa_psi: float
-    kappa_x: float
-    eps: float
-
-    @classmethod
-    def from_config(cls, cfg: dict[str, Any]) -> "Plasticity":
-        p, dt = cfg["plasticity"], cfg["time"]["dt_ms"]
-        return cls(p["alpha_in"], p["delta_max"], math.exp(-dt / p["psi_tau_ms"]), math.exp(-dt / p["x_tau_ms"]),
-                   p["eps"])
+from src.v2.intent import refit_label
+from src.v2.stream_spec import Condition, DynBase, DynSpec, Plasticity, V5Result, V7Inputs  # noqa: F401 (dışa aktarım)
 
 
 class _StreamV5:
     def __init__(self, model: V2Model, conds: list[Condition], cer: CerebellumV2, aff: AffectSpaceV2,
                  plast: Plasticity, alpha_sm: float, anchor_decay: float, eps: float, homeostasis: bool,
                  delay: int, ctrl: Controls, L: int, device: torch.device, drift: Drift | None = None,
-                 dyn_base: DynBase | None = None) -> None:
+                 dyn_base: DynBase | None = None, v7: V7Inputs | None = None) -> None:
         ro, bb = model.readout, model.backbone
         self.bb, self.ro, self.cer, self.aff, self.pl = bb, ro, cer, aff, plast
         E = len(conds)
@@ -309,12 +153,25 @@ class _StreamV5:
         self.lam_c, self.delta_m = f([s.lam_c for s in ds]), f([s.delta_m for s in ds])
         self.f_gas, self.f_brake = f([float(s.gas) for s in ds]), f([float(s.brake) for s in ds])
         self.f_loosen, self.f_cons = f([float(s.loosen) for s in ds]), f([float(s.consolidate) for s in ds])
-        if any(s.a_mode not in (0, 1, 2) for s in ds):
-            raise ValueError("DynSpec.a_mode 0 (iç), 1 (sensör) ya da 2 (maks.) olmalı")
+        if any(s.a_mode not in (0, 1, 2, 3) for s in ds):
+            raise ValueError("DynSpec.a_mode 0 (iç), 1 (sensör), 2 (maks.) ya da 3 (tonik / fazik) olmalı")
+        if any(s.ph_norm not in (0, 1) for s in ds):
+            raise ValueError("DynSpec.ph_norm 0 (‖e‖²/ε²_0) ya da 1 (kopya oranı) olmalı")
         self.a_mode, self.f_gas_dom = f([float(s.a_mode) for s in ds]), f([float(s.gas_dom) for s in ds])
         self.dyn = AffectDynamics(f([s.w_u for s in ds]), f([s.lam_a for s in ds]), f([s.lam_f for s in ds]),
                                   f([s.lam_m for s in ds]), f([s.lam_d for s in ds]), aff.eps)
         self.u0, self.q0 = (dyn_base.u0, dyn_base.q0) if dyn_base is not None else (1.0, 1.0)
+        # fazik kol (§12.20, KR-050): kopya oranı Day-0 tabanı r_0, d_0 ister
+        ph_copy = f([float(s.ph_norm == 1) for s in ds])
+        if bool(ph_copy.sum() > 0) and (dyn_base is None or not dyn_base.r0 or not dyn_base.d0):
+            raise ValueError("kopya oranı (ph_norm = 1) için DynBase.r0 ve d0 (Day-0 tabanı) gerekli")
+        r0 = dyn_base.r0 if dyn_base is not None and dyn_base.r0 else 1.0
+        d0 = dyn_base.d0 if dyn_base is not None and dyn_base.d0 else 1.0
+        self.dyn.set_internal(ph_copy, torch.where(ph_copy > 0, torch.full_like(ph_copy, r0),
+                                                   torch.full_like(ph_copy, cer.eps2_0)), torch.full_like(ph_copy, d0))
+        self.ph_on = f([float(s.ph_on) for s in ds])
+        self.tgt_prev = torch.zeros(E, C, device=device)                     # x̄'(t − 1) (kopya tahmini)
+        self.tgt_valid = torch.zeros((), device=device)
         self.W_anc = self.W.clone()                                          # [E, K, D, N] akış içi çapa
         self.w0_norm = self.W0.norm()
         self.w_mon = cer.w0                                                  # [C, P] ortak izleme yolu (donuk)
@@ -334,20 +191,72 @@ class _StreamV5:
             if c.lam_seq is not None:
                 self.seq_lam[e] = c.lam_seq
         self.zE = torch.zeros(E, device=device)                              # dyn'siz akışta boş çıktılar
+        # V7 (KR-049): BOCPD sensörü, ölü kanal dedektörü, Degenhart hizalaması, sönümlü ReFIT etiketi
+        v7 = v7 or V7Inputs()
+        self.v7 = v7
+        self.bocpd, self.dead_det = v7.bocpd, v7.dead
+        self.is_bocpd = f([float(c.sensor == "bocpd") for c in conds])
+        if any(c.sensor not in ("persist", "bocpd") for c in conds):
+            raise ValueError("Condition.sensor 'persist' ya da 'bocpd' olmalı")
+        if self.bocpd is None and any(c.sensor == "bocpd" for c in conds):
+            raise ValueError("sensor = 'bocpd' koşulu için V7Inputs.bocpd gerekli")
+        self.dead_on = f([float(c.dead) for c in conds]).view(E, 1)          # [E, 1]
+        if self.dead_det is None and any(c.dead for c in conds):
+            raise ValueError("dead = True koşulu için V7Inputs.dead gerekli")
+        if any(c.align not in (0, 1, 2) for c in conds) or any(c.align and c.align not in v7.aligners for c in conds):
+            raise ValueError("Condition.align 0, 1 ya da 2 olmalı ve yuvası V7Inputs.aligners'ta bulunmalı")
+        if any(c.align == 1 for c in conds) and self.bocpd is None:
+            raise ValueError("align = 1 (BOCPD kapılı) için V7Inputs.bocpd gerekli")
+        self.has_align = any(c.align for c in conds)
+        self.align_on = f([float(c.align > 0) for c in conds]).view(E, 1)    # [E, 1]
+        self.slot = torch.tensor([max(c.align - 1, 0) for c in conds], device=device, dtype=torch.long)   # [E]
+        self.A_s = torch.eye(C, device=device).unsqueeze(0).repeat(2, 1, 1).clone()   # [2, C, C] yuvalar (mod 1, 2)
+        self.b_s = torch.zeros(2, C, device=device)
+        self.st_s = torch.ones(2, C, device=device)
+        self.rd_s = torch.zeros(2, device=device)
+        for k, al in v7.aligners.items():                                    # Aligner tensörleri yuva görünümleri olur
+            self.A_s[k - 1].copy_(al.A)
+            self.b_s[k - 1].copy_(al.b)
+            self.st_s[k - 1].copy_(al.stable)
+            self.rd_s[k - 1].copy_(al.ready)
+            al.A, al.b, al.stable, al.ready = self.A_s[k - 1], self.b_s[k - 1], self.st_s[k - 1], self.rd_s[k - 1]
+        self.refit = v7.intent is not None
+        if self.refit and delay != 0:
+            raise ValueError("sönümlü ReFIT etiketi gecikmesizdir (label_delay = 0, §12.15)")
+        if self.refit:
+            self.y_mu, self.y_sd = v7.intent.mu, v7.intent.sd                # [D]
+        self.zC = torch.zeros(C, device=device)
+        self.oneC = torch.ones(C, device=device)
+        self.a_b = torch.zeros((), device=device)
+        # BOCPD kaynağı (§12.16, KR-050): cer_mon → izleme yolunda (koşul 0 = donuk A) donuk W_b'nin artığı
+        self.b_cer = self.bocpd is not None and self.bocpd.spec.source == "cer_mon"
+        if self.b_cer:
+            c0 = conds[0]
+            if v7.w_b is None:
+                raise ValueError("bocpd.source = cer_mon için V7Inputs.w_b gerekli")
+            if c0.dyn is not None or c0.renorm or c0.eta0 != 0 or c0.eta_in0 != 0 or c0.eta_seq is not None or c0.align:
+                raise ValueError("bocpd.source = cer_mon: koşul 0 donuk A olmalı (izleme yolu)")
+        self.w_b = v7.w_b
+        self.x_hat_b = torch.zeros(C, device=device)
+        self.has_mon = self.has_dyn or self.b_cer
         cer.reset_state(E)
         aff.reset_state(E, 1.0, device, a_fast=f([aff.a_f if c.a_fast is None else c.a_fast for c in conds]),
                         slow_on=f([0.0 if c.fixed_slow else 1.0 for c in conds]))   # ε² Day-0 tabanına bölünür
 
     def step(self, xt: torch.Tensor, yt: torch.Tensor, mt: torch.Tensor, j: int, seq_eta: torch.Tensor,
              seq_eta_in: torch.Tensor, seq_lam: torch.Tensor, seq_alpha: torch.Tensor,
-             seq_cons: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """xt: [1, C], yt: [D], mt: [], seq_*: [E] o adımın dış dizisi → v̂ [E, D], a, η, η_in, λ, s_cer, s_drift,
-        a_int, valens, dominans, α, c, u, fren, s_sens [E]"""
+             seq_cons: torch.Tensor, block_end: bool = False) -> tuple[torch.Tensor, ...]:
+        """xt: [1, C], yt: [D] (ReFIT'te [D + 1] = [σ·û, m_int]), mt: [], seq_*: [E] o adımın dış dizisi;
+        block_end: BOCPD bloğunun son adımı (Python) → v̂ [E, D], a, η, η_in, λ, s_cer, s_drift, a_int, valens, dominans,
+        α, c, u, fren, s_sens, a_BOCPD, ölü kanal sayısı, ort. e_cer², ort. Δx̄'² [E]"""
         bb, ro, cer, aff, pl = self.bb, self.ro, self.cer, self.aff, self.pl
         E = self.E
-        # 0. koşul başına etiketsiz yeniden ölçekleme (§12.14), adım λ_norm a_{t−1}'den
+        # V7 paylaşılan girdi bileşenleri (ham x_norm'dan; x(t) bu adımda biliniyor, nedensel)
+        dead = self.dead_det.step(xt[0]) if self.dead_det is not None else self.zC   # [C] 0/1
+        dead_e =self.dead_on * dead.unsqueeze(0)                            # [E, C] koşulun gördüğü ölü kanallar
+        # 0. koşul başına etiketsiz yeniden ölçekleme (§12.14), adım λ_norm a_{t−1}'den; ölü kanal donar (§12.17)
         lam_used = self.lam_t.clone()
-        dr = (lam_used * mt * self.rn[:, 0]).unsqueeze(1)                    # [E, 1]
+        dr = (lam_used * mt * self.rn[:, 0]).unsqueeze(1) * (1.0 - dead_e)   # [E, C]
         diff = xt - self.rm                                                  # [E, C]
         self.rm.add_(dr * diff)
         self.rv.add_(dr * (diff * diff - self.rv))
@@ -357,8 +266,17 @@ class _StreamV5:
             self.rv.add_(ret * (self.v0 - self.rv))
         x_rn =self.m0 + (xt - self.rm) * torch.sqrt(self.v0 / (self.rv + self.reps))
         xe = torch.where(self.rn > 0, x_rn, xt.expand(E, -1))               # [E, C]
+        xe = torch.where(dead_e > 0, self.m0.expand(E, -1), xe)              # ölü → Day-0 ortalaması (nötr)
+        if self.has_align:                                                   # §12.18: kararsız / ölü kanal yeniden kurulur
+            xa = torch.einsum("scd,d->sc", self.A_s, xt[0]) + self.b_s       # [2, C]
+            use = (self.align_on * self.rd_s[self.slot].unsqueeze(1)
+                   * torch.maximum(1.0 - self.st_s[self.slot], dead.unsqueeze(0)))   # [E, C]
+            xe = torch.where(use > 0, xa[self.slot], xe)
         self.x_bar.mul_(self.alpha_sm).add_((1.0 - self.alpha_sm) * xe)
         self.x_bar_raw.mul_(self.alpha_sm).add_((1.0 - self.alpha_sm) * xt[0])   # [C] ham hedef (KR-046)
+        if self.bocpd is not None:                                           # kaynak: x_norm ya da izleme yolu artığı
+            vb = (self.x_bar_raw - self.x_hat_b) * self.valid_mon if self.b_cer else xt[0]
+            self.a_b.copy_(self.bocpd.step(vb, mt, self.oneC - dead, block_end))
         if self.drift is not None:
             self.s_drift.copy_(self.drift.step(xt[0], mt) / self.delta0)     # δ(t)/δ_0, x(t)'ye kadar
         # 1. tahmin
@@ -374,7 +292,8 @@ class _StreamV5:
         tgt = torch.where(self.cer_raw > 0, self.x_bar_raw.expand(E, -1), self.x_bar)   # [E, C]
         e_cer = cer.error(tgt)                                               # [E, C]
         cer.update(e_cer, mt, self.cer_eta)
-        s_cer = e_cer.pow(2).mean(1) / self.e2_0                             # [E] Day-0 tabanına göre
+        e2 = e_cer.pow(2).mean(1)                                            # [E]
+        s_cer = e2 / self.e2_0                                               # [E] Day-0 tabanına göre
         if self.has_dyn:                                                     # ortak sensör: A yolu, donuk W_cer, ham x̄
             s_mon = ((self.x_bar_raw - self.x_hat_mon) * self.valid_mon).pow(2).mean() / self.e2_0   # []
             s_sens = torch.where(self.is_dyn > 0, s_mon, s_cer)              # [E]
@@ -383,16 +302,23 @@ class _StreamV5:
         mix = torch.where(self.dmax > 0, torch.maximum(s_sens, self.s_drift),
                           (1.0 - self.drift_w) * s_sens + self.drift_w * self.s_drift)   # [E]
         aff.update(mix, mt)
+        if self.bocpd is not None:                                           # V7: sensör arousal'ı = BOCPD a (§12.16)
+            aff.a.copy_(torch.where(self.is_bocpd > 0, self.a_b.expand(E), aff.a))
         g_fast, eta, eta_in = aff.forward(self.enabled, self.gate_on, self.eta0, self.alpha_eta, self.eta_in0)
         if self.has_dyn:                                                     # KR-047: a_int, v, d → η, α, c, g
             u = vk.var(1, unbiased=False).mean(1) / self.u0                  # [E] başlık uyuşmazlığı / u_0
-            a_in = self.dyn.update_arousal(s_cer, u, mt)                     # iç arousal (s_int + u)
-            a_int = torch.where(self.a_mode == 0, a_in,                      # kontrolü süren arousal
-                                torch.where(self.a_mode == 1, aff.a, torch.maximum(a_in, aff.a)))
+            d1 = (tgt - self.tgt_prev).pow(2).mean(1) * self.tgt_valid       # [E] kopya tahmininin hatası
+            self.tgt_prev.copy_(tgt)
+            self.tgt_valid.fill_(1.0)
+            a_in = self.dyn.update_arousal(e2, u, mt, d1) * self.ph_on       # iç (fazik) arousal (§12.6 / §12.20)
+            a_int = torch.where(self.a_mode == 0, a_in,                      # η ve g'yi süren arousal
+                                torch.where(self.a_mode == 1, aff.a,
+                                            torch.where(self.a_mode == 2, torch.maximum(a_in, aff.a), a_in)))
+            a_alp = torch.where(self.a_mode == 3, aff.a, a_int)              # α'yı süren (iş bölümünde tonik)
             m_l = ((self.W - self.W_anc).flatten(1).norm(dim=1) / (self.delta_m * self.w0_norm)).clamp(0.0, 1.0)
             v_used, d_used = self.dyn.v.clone(), self.dyn.d.clone()          # e_v(t − 1)'e kadar (bu adımda kullanılan)
-            eta_d, alpha_d, brk, cns = AffectDynamics.controls(
-                a_int, v_used, d_used, m_l, self.eta0, self.alpha_eta, self.rho_v, self.alpha_c, self.alpha_b,
+            eta_d, alpha_d, brk, cns = AffectDynamics.routed_controls(
+                a_int, a_alp, v_used, d_used, m_l, self.eta0, self.alpha_eta, self.rho_v, self.alpha_c, self.alpha_b,
                 self.f_gas, self.f_brake, self.f_loosen, self.f_cons, self.f_gas_dom)
             dmask = self.is_dyn > 0
             eta = torch.where(dmask, eta_d, eta)
@@ -414,6 +340,11 @@ class _StreamV5:
             r_old, m_old = self.buf_r[j].clone(), self.buf_m[j].clone()
             psi_old, x_old = self.buf_psi[j].clone(), self.buf_x[j].clone()
             err = (self.buf_y[j] - self.buf_v[j]) * m_old                    # [E, D]
+        elif self.refit:                                                     # §12.15: gecikmesiz sönümlü ReFIT
+            D = v.shape[1]
+            y_int = refit_label(v, yt[:D].unsqueeze(0), self.y_mu, self.y_sd)   # [E, D]
+            r_old, m_old, err = r, mt * yt[D], (y_int - v) * (mt * yt[D])
+            psi_old, x_old = None, None
         else:
             r_old, m_old, err = r, mt, (yt.unsqueeze(0) - v) * mt
             psi_old, x_old = None, None
@@ -453,9 +384,11 @@ class _StreamV5:
                 self.buf_x[j] = self.x_tr
         # 4. beyincik tahmini x̂_{t+1} (kapılanmamış izler, efference copy v̂_{t−1}; cer_src → izleme yolu)
         cer.forward(ro.traces.mean(0)[self.src], self.v_prev[self.src])
-        if self.has_dyn:                                                     # ortak sensör tahmini x̂_{t+1} (koşul 0)
+        if self.has_mon:                                                     # ortak izleme yolu tahmini x̂_{t+1} (koşul 0)
             self.phi_mon.copy_(torch.cat([ro.traces.mean(0)[0], self.v_prev[0]]))
             self.x_hat_mon.copy_(self.w_mon @ self.phi_mon)
+            if self.b_cer:
+                self.x_hat_b.copy_(self.w_b @ self.phi_mon)
             self.valid_mon.fill_(1.0)
         self.v_prev.copy_(v)
         self.rate.add_(mt * s)
@@ -465,11 +398,13 @@ class _StreamV5:
             self.theta.add_(self.hlr * mt * (self.rate_ema - self.target)).clamp_(bb.theta_min, bb.theta_max)
         if self.has_dyn:
             dyn_out = (a_int.clone(), v_used, d_used, alpha_t.clone(), cons_t, u, brk, s_sens)
+            d1_out = d1
         else:
             z = self.zE
             dyn_out = (z, z, z, alpha_t.clone(), z, z, z, s_sens)
+            d1_out = z
         return (v, aff.a.clone(), self.eta_t.clone(), self.eta_in_t.clone(), lam_used, s_cer,
-                self.s_drift.expand(E).clone()) + dyn_out
+                self.s_drift.expand(E).clone()) + dyn_out + (self.a_b.expand(E).clone(), dead_e.sum(1), e2, d1_out)
 
 
 def _persistent(st: _StreamV5) -> list[torch.Tensor]:
@@ -486,10 +421,12 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
                     conds: list[Condition], cer: CerebellumV2, aff: AffectSpaceV2, plast: Plasticity, alpha_sm: float,
                     anchor_decay: float, eps: float, homeostasis: bool, chunk: int = 0, label_delay: int = 0,
                     controls: Controls | None = None, drift: Drift | None = None,
-                    dyn_base: DynBase | None = None) -> V5Result:
+                    dyn_base: DynBase | None = None, v7: V7Inputs | None = None) -> V5Result:
     """x: [n, C] x_norm, y: [n, D] standart hedef (cihazda). [start, stop) skorlanır; akış max(0, start − burnin)'de başlar.
 
-    chunk > 0 ve CUDA → CUDA Graph parçaları (chunk, label_delay'in katı); aksi halde adım adım.
+    v7: BOCPD, ölü kanal, hizalama, ReFIT (KR-049). intent verilirse y yerine niyet girdisi kullanılır (y okunmaz);
+    BOCPD blokları akış başından sayılır; hizalama haritası parça sınırlarında (graf dışında) yenilenir.
+    chunk > 0 ve CUDA → CUDA Graph parçaları (chunk, label_delay'in ve BOCPD bloğunun katı); aksi halde adım adım.
     drift: sapma terimi (`drift_w > 0` olan koşul varsa gerekli, KR-046).
     dyn_base: dinamik duygu Day-0 tabanları (`dyn` koşulu varsa gerekli, KR-047).
     """
@@ -504,12 +441,26 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
     dev = x.device
     begin = max(0, start - burnin)
     total, Ls = stop - begin, stop - start
-    E, D = len(conds), y.shape[1]
+    v7 = v7 or V7Inputs()
+    blk = v7.bocpd.spec.block if v7.bocpd is not None else 0
+    if chunk > 0 and blk > 0 and chunk % blk:
+        raise ValueError(f"graph_chunk ({chunk}) BOCPD blok uzunluğunun ({blk}) katı olmalı")
+    if v7.intent is not None:                                                # ReFIT: adım girdisi [σ·û, m_int]
+        y = torch.cat([v7.intent.dd, v7.intent.m.unsqueeze(1)], 1)          # [n, D + 1]
+    E, D = len(conds), y.shape[1] - (1 if v7.intent is not None else 0)
+    for al in v7.aligners.values():
+        al.reset_state()
+    if v7.bocpd is not None:
+        v7.bocpd.reset_state()
+    if v7.dead is not None:
+        v7.dead.reset_state()
     st = _StreamV5(model, conds, cer, aff, plast, alpha_sm, anchor_decay, eps, homeostasis, d,
-                   controls or Controls(), Ls, dev, drift, dyn_base)
+                   controls or Controls(), Ls, dev, drift, dyn_base, v7)
     model.reset_state(E)
-    # step çıktıları: v̂ [E, D], a, η, η_in, λ_norm, s_cer, s_drift, a_int, valens, dominans, α, c, u, fren, s_sens [E]
-    outs = [torch.empty(E, total, D, device=dev)] + [torch.zeros(E, total, device=dev) for _ in range(14)]
+    # step çıktıları: v̂ [E, D], a, η, η_in, λ_norm, s_cer, s_drift, a_int, valens, dominans, α, c, u, fren, s_sens,
+    # a_BOCPD, ölü kanal sayısı, ort. e_cer², ort. Δx̄'² [E]
+    outs = [torch.empty(E, total, D, device=dev)] + [torch.zeros(E, total, device=dev) for _ in range(18)]
+    Dy = y.shape[1]
     mask = torch.zeros(total, device=dev)
     mask[start - begin:] = 1.0
     seqs = [torch.zeros(E, total, device=dev) for _ in range(5)]            # η, η_in, λ, α, c (burn-in 0)
@@ -519,10 +470,21 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
     def j_of(i: int) -> int:
         return i % d if d else 0
 
+    def bend(i: int) -> bool:                                                # BOCPD blok sonu (akış başından)
+        return blk > 0 and (i + 1) % blk == 0
+
+    def realign(i: int) -> None:                                             # graf dışında; i: akış içi indeks
+        if not v7.aligners:
+            return
+        a_now = float(st.a_b) if v7.bocpd is not None else 0.0
+        live = st.oneC - (v7.dead.dead if v7.dead is not None else st.zC)
+        for al in v7.aligners.values():
+            al.maybe_refit(x, begin + i, begin, a_now, live)
+
     if chunk > 0 and dev.type == "cuda":
         C = x.shape[1]
         sx = torch.zeros(chunk, C, device=dev)
-        sy = torch.zeros(chunk, D, device=dev)
+        sy = torch.zeros(chunk, Dy, device=dev)
         sm = torch.zeros(chunk, device=dev)
         ss = [torch.zeros(E, chunk, device=dev) for _ in seqs]
         init = [t.clone() for t in _persistent(st)]
@@ -531,17 +493,19 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):                                        # ısınma; ardından tüm durum geri alınır
-            st.step(sx[0:1], sy[0], sm[0], 0, *(s_[:, 0] for s_ in ss))
+            st.step(sx[0:1], sy[0], sm[0], 0, *(s_[:, 0] for s_ in ss), block_end=bend(0))
         torch.cuda.current_stream().wait_stream(side)
         _restore(st, snap)
         _set_persistent(st, init)
         g = torch.cuda.CUDAGraph()
         with torch.cuda.graph(g):
-            res = [st.step(sx[i: i + 1], sy[i], sm[i], j_of(i), *(s_[:, i] for s_ in ss)) for i in range(chunk)]
+            res = [st.step(sx[i: i + 1], sy[i], sm[i], j_of(i), *(s_[:, i] for s_ in ss), block_end=bend(i))
+                   for i in range(chunk)]
             stk = [torch.stack([r_[k] for r_ in res], 1) for k in range(len(outs))]   # [E, chunk, ...]
         final = _persistent(st)
         n_full = total // chunk * chunk
         for c in range(0, n_full, chunk):
+            realign(c)
             sx.copy_(x[begin + c: begin + c + chunk])
             sy.copy_(y[begin + c: begin + c + chunk])
             sm.copy_(mask[c: c + chunk])
@@ -559,7 +523,10 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
     else:
         rest = range(total)
     for i in rest:
-        r_ = st.step(x[begin + i: begin + i + 1], y[begin + i], mask[i], j_of(i), *(s_[:, i] for s_ in seqs))
+        if i % (chunk if chunk > 0 else v7.align_check) == 0:
+            realign(i)
+        r_ = st.step(x[begin + i: begin + i + 1], y[begin + i], mask[i], j_of(i), *(s_[:, i] for s_ in seqs),
+                     block_end=bend(i))
         for o, v_ in zip(outs, r_):
             o[:, i] = v_
 
@@ -570,15 +537,19 @@ def stream_adapt_v5(model: V2Model, x: torch.Tensor, y: torch.Tensor, start: int
     model.reset_state(1)
     sl = slice(start - begin, None)
     (pred, a_o, eta_o, ein_o, lam_o, scer_o, sdr_o, aint_o, val_o, dom_o, alp_o, cons_o, u_o, brk_o,
-     ssens_o) = (o[:, sl] for o in outs)
+     ssens_o, ab_o, nd_o, e2_o, d1_o) = (o[:, sl] for o in outs)
     return V5Result(pred, st.rate / Ls, dw, din, st.din_max.clone(), a_o, eta_o, ein_o, lam_o,
                     {"theta": st.theta.clone(), "s_cer": scer_o, "s_drift": sdr_o, "a_int": aint_o, "val": val_o,
                      "dom": dom_o, "alpha": alp_o, "cons": cons_o, "u": u_o, "brake": brk_o, "s_sens": ssens_o,
-                     "anc_rel": anc})
+                     "anc_rel": anc, "a_bocpd": ab_o, "n_dead": nd_o, "e2": e2_o, "d1": d1_o,
+                     "align_fits": {k: al.n_fits for k, al in v7.aligners.items()}})
 
 _MUTABLE = ("W", "Win", "din_max", "theta", "rate_ema", "rate", "x_bar", "x_tr", "psi_tr", "v_prev", "g_fast",
             "eta_t", "eta_in_t", "lam_t", "rm", "rv", "buf_r", "buf_v", "buf_y", "buf_m", "buf_psi", "buf_x",
-            "x_bar_raw", "s_drift", "h_t", "W_anc", "phi_mon", "x_hat_mon", "valid_mon")
+            "x_bar_raw", "s_drift", "h_t", "W_anc", "phi_mon", "x_hat_mon", "valid_mon", "a_b", "x_hat_b", "tgt_prev",
+            "tgt_valid")
+_BOCPD_STATE = ("log_pd", "log_pr", "mu", "kappa", "alpha", "beta", "bsum", "bcnt", "a", "n_recent", "o_prev",
+                "has_prev", "y")
 
 
 def _snapshot(st: _StreamV5) -> dict[str, torch.Tensor]:
@@ -587,10 +558,15 @@ def _snapshot(st: _StreamV5) -> dict[str, torch.Tensor]:
         snap["cer_" + k] = getattr(st.cer, k).clone()
     for k in ("e_fast", "e_slow", "a"):
         snap["aff_" + k] = getattr(st.aff, k).clone()
-    for k in ("e_a", "q_f", "q_m", "q_d", "a", "v", "d"):
+    for k in ("e_a", "q_f", "q_m", "q_d", "a", "v", "d", "n_e", "k_e", "u_e"):
         snap["dyn_" + k] = getattr(st.dyn, k).clone()
     if st.drift is not None:
         snap["drift_m"], snap["drift_v"] = st.drift.m.clone(), st.drift.v.clone()
+    if st.bocpd is not None:
+        for k in _BOCPD_STATE:
+            snap["bocpd_" + k] = getattr(st.bocpd, k).clone()
+    if st.dead_det is not None:
+        snap["dead_z"], snap["dead_dead"] = st.dead_det.z.clone(), st.dead_det.dead.clone()
     return snap
 
 
@@ -604,6 +580,10 @@ def _restore(st: _StreamV5, snap: dict[str, torch.Tensor]) -> None:
             getattr(st.dyn, k[4:]).copy_(v)
         elif k.startswith("drift_"):
             getattr(st.drift, k[6:]).copy_(v)
+        elif k.startswith("bocpd_"):
+            getattr(st.bocpd, k[6:]).copy_(v)
+        elif k.startswith("dead_"):
+            getattr(st.dead_det, k[5:]).copy_(v)
         else:
             getattr(st, k).copy_(v)
 
@@ -663,8 +643,80 @@ def dyn_baseline_stream(model: V2Model, x: torch.Tensor, y: torch.Tensor, start:
                         cer: CerebellumV2, aff: AffectSpaceV2, plast: Plasticity, alpha_sm: float, eps: float,
                         chunk: int = 0) -> DynBase:
     """`collect_dyn_baseline` ile aynı tabanlar, akışla (CUDA Graph parçaları; uzun dilimde hızlı): donuk A ve η = 0'lı,
-    kapısız, yeniden ölçeklemesiz dyn yoklayıcı (W = W_0, g = 1). x: [n, C], y: [n, D] → DynBase."""
-    probe = Condition("U", dyn=DynSpec(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False, False, False, False))
+    kapısız, yeniden ölçeklemesiz dyn yoklayıcı (W = W_0, g = 1, donuk beyincik). x: [n, C], y: [n, D] → DynBase.
+
+    Kopya oranı tabanı (§12.20): r_0 = ort. e_cer² / ort. (x̄(t) − x̄(t−1))², d_0 = ort. (x̄(t) − x̄(t−1))²."""
+    probe = Condition("U", cer_eta=0.0,
+                      dyn=DynSpec(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False, False, False, False))
     res = stream_adapt_v5(model, x, y, start, stop, burnin, [Condition("A"), probe], cer, aff, plast, alpha_sm, 0.0, eps,
                           False, chunk=chunk, dyn_base=DynBase(1.0, 1.0))
-    return DynBase(float(res.extra["u"][1].double().mean()), float((y[start:stop] - res.pred[0]).double().pow(2).mean()))
+    d0 = float(res.extra["d1"][1].double().mean())
+    return DynBase(float(res.extra["u"][1].double().mean()), float((y[start:stop] - res.pred[0]).double().pow(2).mean()),
+                   float(res.extra["e2"][1].double().mean()) / d0, d0)
+
+
+@torch.no_grad()
+def collect_streams(model: V2Model, x: torch.Tensor, a: int, b: int, n_streams: int, burnin: int, alpha_sm: float,
+                    proj: torch.Tensor | None = None, keep_r: bool = False
+                    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    """Donuk model, [a, b) aralığı `n_streams` ardışık akışla (her biri kendi burn-in'iyle); kapılanmamış izler (g = 1).
+
+    → x̄(t) [L, C] (x(t) dahil), v̂(t−1) [L, D], r̄(t)·projᵀ [L, K] (proj: [K, N]), istenirse r̄(t) [L, N].
+    φ(t) = [r̄(t), v̂(t−1)] (`collect_cerebellum_data` ile aynı); akışlar uç uca eklenir."""
+    model.eval()
+    L = b - a
+    seg = -(-L // n_streams)
+    starts = [a + i * seg for i in range(n_streams) if a + i * seg < b]
+    lens = [min(seg, b - s) for s in starts]
+    begin = [max(0, s - burnin) for s in starts]
+    pre = [s - g for s, g in zip(starts, begin)]
+    B, T = len(starts), max(p + n for p, n in zip(pre, lens))
+    C, N, dev = x.shape[1], model.backbone.N, x.device
+    D = model.readout.weight.shape[1]
+    xb = torch.zeros(B, T, C, device=dev)
+    for i in range(B):
+        xb[i, : pre[i] + lens[i]] = x[begin[i]: starts[i] + lens[i]]
+    model.reset_state(B)
+    xbar = torch.zeros(B, C, device=dev)
+    vprev = torch.zeros(B, D, device=dev)
+    o_bar = torch.empty(B, T, C, device=dev)
+    o_vp = torch.empty(B, T, D, device=dev)
+    o_p = torch.empty(B, T, proj.shape[0], device=dev) if proj is not None else None
+    o_r = torch.empty(B, T, N, device=dev) if keep_r else None
+    for t in range(T):
+        xt = xb[:, t]
+        xbar = alpha_sm * xbar + (1.0 - alpha_sm) * xt
+        s = model.backbone.step(xt)                                           # [B, N]
+        v, rb = model.readout.step(s)                                         # [B, D], [B, N]
+        o_bar[:, t] = xbar
+        o_vp[:, t] = vprev
+        if o_p is not None:
+            o_p[:, t] = rb @ proj.T
+        if o_r is not None:
+            o_r[:, t] = rb
+        vprev = v
+    model.reset_state(1)
+
+    def cut(o: torch.Tensor | None) -> torch.Tensor | None:
+        return None if o is None else torch.cat([o[i, pre[i]: pre[i] + lens[i]] for i in range(B)])
+
+    return cut(o_bar), cut(o_vp), cut(o_p), cut(o_r)                         # type: ignore[return-value]
+
+
+@torch.no_grad()
+def monitor_residual_blocks(model: V2Model, x: torch.Tensor, w_b: torch.Tensor, a: int, b: int, block: int,
+                            n_streams: int, burnin: int, alpha_sm: float, piece: int) -> torch.Tensor:
+    """İzleme yolu artığı x̄(t) − W_b·φ(t−1)'in [a, b) aralığındaki blok ortalamaları → [nb, C] (BOCPD cer_mon referansı).
+
+    w_b: [C, N + D]. Bellek için `piece` adımlık parçalarla (blok katı); parça sınırında bir adımlık önce-akış alınır."""
+    N = model.backbone.N
+    piece = max(block, piece // block * block)
+    out = []
+    for p0 in range(a, b, piece):
+        p1 = min(b, p0 + piece)
+        bar, vp, P, _ = collect_streams(model, x, p0 - 1, p1, n_streams, burnin, alpha_sm, proj=w_b[:, :N])
+        pred = P + vp @ w_b[:, N:].T                                          # W_b·φ(t)
+        res = bar[1:] - pred[:-1]                                             # [p1 − p0, C]
+        nb = res.shape[0] // block
+        out.append(res[: nb * block].reshape(nb, block, -1).mean(1))
+    return torch.cat(out)

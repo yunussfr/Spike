@@ -22,6 +22,20 @@ data:
     - loco_20170301_05
     - loco_20170215_02
     - loco_20170210_03
+  tune_files:                # V7 (KR-049): yalnızca ayar için, test dışı (Zenodo 583331; NeuroBench'te yok)
+    - indy_20160624_03
+    - indy_20161014_04
+    - indy_20170127_03
+    - loco_20170213_02
+    - loco_20170217_02
+    - loco_20170227_04
+  md5:                       # NeuroBench'in md5 tablosunda olmayan dosyalar (Zenodo API'sinden, 2026-11-09)
+    indy_20160624_03: 9aa921f0788f6ccd32a1b8808c18eabd
+    indy_20161014_04: d8cf4a2866f56b4c46513ff9fe5ddaf4
+    indy_20170127_03: 3d77802c59e3e4ebe6778326cfc68c0a
+    loco_20170213_02: e051a2ddfeb67f31395a8f934b6a04bf
+    loco_20170217_02: bba2889a6ea20e74c8a9054e97a80dd4
+    loco_20170227_04: 47dc8d717ac4e46af31a696422d83ed7
   bin_width: 0.004           # s; = time.dt_ms (NeuroBench ham çözünürlüğü)
   stride: 0.004              # s; örtüşmesiz kutular
   train_ratio: 0.8           # NeuroBench bölmesi: segmentlerin %80 train, kalan yarı yarıya val/test (KR-035)
@@ -30,6 +44,10 @@ data:
 primates:                    # günler arası protokol: oturumlar tarih sırasıyla, ilki Day-0 (KR-035)
   indy: [indy_20160622_01, indy_20160630_01, indy_20170131_02]
   loco: [loco_20170210_03, loco_20170215_02, loco_20170301_05]
+
+tune_primates:               # V7 ayar protokolü (KR-049): Day-0 = primates[p][0] (aynı model), Day-k bu oturumlar.
+  indy: [indy_20160624_03, indy_20161014_04, indy_20170127_03]   # Day-0'dan +2, +114, +219 gün (test: +8, +223)
+  loco: [loco_20170213_02, loco_20170217_02, loco_20170227_04]   # +3, +7, +17 gün (test: +5, +19)
 
 windows:                     # çevrimdışı eğitim pencereleri (§12.8); yalnızca train diliminden
   length_ms: 2000.0          # 4 ms'de 500 adım

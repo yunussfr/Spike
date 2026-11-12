@@ -13,6 +13,7 @@ from typing import Any
 import torch
 
 from src.data.primate import Session
+from src.v2.augment import AugSpec, augment_windows
 from src.v2.backbone import homeostatic_loss
 from src.v2.data import gather_windows, ms_to_steps, train_window_starts
 from src.v2.encoder import SpikeEncoderV2
@@ -30,6 +31,7 @@ class Prepared:
     y_mu: torch.Tensor                    # [D]
     y_sd: torch.Tensor                    # [D]
     starts: torch.Tensor                  # [W] train pencere başlangıçları
+    z0: torch.Tensor | None = None        # [C] sıfır sayımın x_norm'u (ölü kanal dedektörü, augmentation; KR-049)
 
 
 def prepare_session(cfg: dict[str, Any], s: Session, device: torch.device, stats_from: Session | None = None) -> Prepared:
@@ -46,7 +48,7 @@ def prepare_session(cfg: dict[str, Any], s: Session, device: torch.device, stats
     else:
         mu, sd = torch.zeros(s.y.shape[1]), torch.ones(s.y.shape[1])
     return Prepared(s, enc.normalize(s.x).to(device), ((s.y - mu) / sd).to(device), mu.to(device), sd.to(device),
-                    train_window_starts(s, cfg))
+                    train_window_starts(s, cfg), enc.normalize(torch.zeros(1, s.D_in))[0].to(device))
 
 
 @dataclass
@@ -158,6 +160,14 @@ def pool(ps: list[Prepared]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
             torch.cat([p.starts + int(o) for p, o in zip(ps, offs)]))
 
 
+def pool_z0(ps: list[Prepared]) -> tuple[torch.Tensor, torch.Tensor]:
+    """`pool` ile aynı sırada: oturum sonu indeksleri [S] (birleşik x'te) ve oturumların sıfır kodu z0 [S, C]."""
+    ends = torch.tensor([len(p.x) for p in ps]).cumsum(0)
+    if any(p.z0 is None for p in ps):
+        raise ValueError("augmentation için Prepared.z0 gerekli (prepare_session)")
+    return ends, torch.stack([p.z0 for p in ps])
+
+
 def train_model(model: V2Model, ps: Prepared | list[Prepared], cfg: dict[str, Any], seed: int, metric: Metric,
                 epochs: int | None = None, log: Callable[[dict[str, float]], None] | None = None) -> TrainResult:
     """Bir ya da birden çok oturumun (aynı kanal sayısı) train pencereleriyle eğitir.
@@ -170,6 +180,9 @@ def train_model(model: V2Model, ps: Prepared | list[Prepared], cfg: dict[str, An
     epochs = epochs or t["epochs"]
     L = ms_to_steps(cfg["windows"]["length_ms"], cfg["time"]["dt_ms"])
     x, y, starts = pool(ps)
+    aug = AugSpec.from_config(cfg)
+    if aug.enabled:
+        ends, z0s = pool_z0(ps)
     B = min(t["batch"], len(starts))
     trainer = TrainStep(model, cfg, epochs, B, L, x.shape[1], y.shape[1], x.device)
     gen = torch.Generator().manual_seed(seed)
@@ -182,7 +195,11 @@ def train_model(model: V2Model, ps: Prepared | list[Prepared], cfg: dict[str, An
         tot, nb = 0.0, 0
         for i in range(0, len(order) - B + 1, B):                            # drop_last: sabit batch (TrainStep)
             st = order[i: i + B].to(x.device)
-            tot += trainer(gather_windows(x, st, L), gather_windows(y, st, L))       # [B, L, C], [B, L, D]
+            xb = gather_windows(x, st, L)                                    # [B, L, C]
+            if aug.enabled:                                                  # §12.19: yalnızca eğitim penceresi
+                sid = torch.searchsorted(ends, order[i: i + B], right=True)  # pencerenin oturumu
+                xb = augment_windows(xb, z0s[sid.to(z0s.device)], aug, gen)
+            tot += trainer(xb, gather_windows(y, st, L))                     # [B, L, C], [B, L, D]
             nb += 1
         trainer.sched.step()
         train_sec = time.time() - t0

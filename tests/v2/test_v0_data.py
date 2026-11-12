@@ -9,7 +9,7 @@ import torch
 from experiments.v2_ceiling import block_features
 from src.data.primate import Session
 from src.utils.config import load_config
-from src.v2.data import (check_time, crossday_sessions, gather_windows, load_v2_session, ms_to_steps,
+from src.v2.data import (check_time, check_tune_disjoint, crossday_sessions, gather_windows, load_v2_session, ms_to_steps,
                          train_window_starts)
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,3 +93,18 @@ def test_4ms_matches_20ms_cache() -> None:
     assert torch.allclose(s4.y[::5][: len(x20)], c20["y"])
     assert abs(s4.val_start - 5 * c20["val_start"]) < 5
     assert abs(s4.test_start - 5 * c20["test_start"]) < 5
+
+
+def test_tune_sessions_disjoint_from_test() -> None:
+    """Ayar oturumları test oturumlarından ayrı (KR-049, hakem raporu madde 2); çakışma hata."""
+    check_tune_disjoint(CFG)
+    for primate in CFG["primates"]:
+        day0, tune = crossday_sessions(CFG, primate, tune=True)
+        assert day0 == CFG["primates"][primate][0]
+        assert tune and not set(tune) & set(CFG["primates"][primate])
+    bad = copy.deepcopy(CFG)
+    bad["tune_primates"]["indy"] = bad["tune_primates"]["indy"] + [CFG["primates"]["indy"][-1]]
+    with pytest.raises(ValueError):
+        check_tune_disjoint(bad)
+    with pytest.raises(ValueError):
+        crossday_sessions(bad, "indy", tune=True)
