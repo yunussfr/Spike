@@ -104,7 +104,7 @@ Her gün sonunda güncellenir. En yeni gün en üstte.
 **Yaptıklarım**
 - [x] `docs/PhasesV2.md`: v2 fazları V0–V6, her biri testler ve çıkış kriteriyle.
 - [x] ARCHITECTURE.md: "Sürümler" notu, §12 Spike v2 (KV1–KV8, denklemler, protokol, v2-A…E, açık noktalar), §11 kaydı.
-- [x] CLAUDE.md v2'ye göre güncellendi; Desicion.md'ye KR-034.
+- [x] CLAUDE.md v2'ye göre güncellendi; Decision.md'ye KR-034.
 
 **Etkisi**
 - v1 kuralları v1 kodunda geçerli; v2 kodu yalnızca §12'ye bağlı. Kod değişikliği yok.
@@ -350,7 +350,7 @@ Her gün sonunda güncellenir. En yeni gün en üstte.
   - Testler: `tests/test_affect.py` ve sızıntı testi (duygu uzayı açıkken ŷ, x̂ ve ağırlıklar birebir aynı).
 - [x] **Mimari:** ARCHITECTURE.md §3.1 (kanal başına ölçek), §3.4 (duygu uzayı ayrıntıları), §3.6 (karar bloğunda normalize LMS) ve §11 güncellendi.
 - [x] **Dokümanlar:**
-  - `docs/Desicion.md`: KR-001…020, geçmiş kararlar dahil.
+  - `docs/Decision.md`: KR-001…020, geçmiş kararlar dahil.
   - `docs/Explain.md`: düzeltme notları + Faz 3 anlatımı (veri, ön işleme, normalize LMS, karar bloğu, ajan akışı, A/B/C, R²).
 - [x] **Teşhis (KR-014):**
   - Rezervuar hız bilgisini taşıyor: ridge val R² 0,516, ham sayım 0,11, 10 adım geçmiş 0,51.
@@ -372,7 +372,7 @@ Her gün sonunda güncellenir. En yeni gün en üstte.
    - Seçilen: `lr_z = 0,03` + z ön-aktivasyonuna L2 cezası `λ = 0,03` (`affect.preact_l2`), baş ağırlıkları [1, 1, 1].
    - Val sonucu: AUC 0,807 (Indy) / 0,814 (Loco); doygunluk %60–68 → %1–3; üç baş da iki oturumda öğreniyor.
    - Yedek seçenek (`lr_z = 0,01`) gerekmedi.
-   - Tam tablo Desicion.md KR-021'de. ARCHITECTURE.md §3.4'e `− λ·a` terimi eklendi.
+   - Tam tablo Decision.md KR-021'de. ARCHITECTURE.md §3.4'e `− λ·a` terimi eklendi.
    - Açık: Loco'da u başı zayıf (0,81 → 0,80).
    - Ayrıca: tam `pytest` 75/75 geçti (2026-10-29, L2 eklenmeden önce). Ardından affect/agent/invariants testleri yeniden geçti.
 3. ~~KR-019 kaydı~~ yazıldı.

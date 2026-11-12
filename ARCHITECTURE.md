@@ -6,6 +6,7 @@ Bu dosya kod tabanının **değişmez kurallarını** tanımlar. Her yeni kod, h
 > - **Spike v1** (§1–§10): sabit LIF rezervuarı + yerel okumalar. Kuralları K1–K8. v1 kodu (`LIFReservoir`, A/B/C, Faz 0–6) bu kurallara uymaya devam eder.
 > - **Spike v2** (§12): çevrimdışı eğitilen zamansal omurga + çevrimiçi nöromodüle yerel uyum. Kuralları **KV1–KV8**. Kaynak: `docs/spike_v2_mimari_spesifikasyon.md`, fazlar: `docs/PhasesV2.md`.
 > - v2 kodu yalnızca §12'ye bağlıdır; v1 kuralları (ör. K1 sabit rezervuar, K7 k-WTA) v2 modüllerini bağlamaz. Aktif geliştirme hattı v2'dir.
+> - **2026-11-09 (KR-049):** v1 kodu master'dan kaldırıldı; `v1-final` git tag'inde durur. §1–§10 kayıt olarak kalır.
 
 ---
 
@@ -422,6 +423,8 @@ Her deney üç konfigürasyonla koşulur:
 
 | Tarih | Değişiklik | Sebep |
 |---|---|---|
+| 2026-11-10 | §12.16 BOCPD: tek boyutlu skor (kanal başına z²'nin ortalamasının logaritması) ve Day-0 rejimine dönüş (p_0); kaynak seçimi x / ar1 / cer_mon. Yeni §12.20: tonik / fazik iş bölümü — tonik arousal BOCPD (→ çapa gevşetme, λ_norm kapısı), fazik arousal plastik beyincik hatasının kopya tahminine oranı (→ η gazı, g). KV4 notu, §12.9 V7 koşulları ve ikincil (beyincik) aile, §12.11 | KR-050: teşhiste bugünkü BOCPD Day-0 ayrılmış dilimde her tavlamada %90–97 yanlış alarm verdi (dönüşsüz Day-0 rejimi + 96–192 kanalın bağımsız çarpımı); CR her kaynakta kalibre oldu. Beyincik sürprizi ‖e‖²/ε²_0 Indy'de ateşleme düşünce yeni günde azalıyordu; kopya oranı bunu düzeltti. Kullanıcı onayı (2026-11-10) |
+| 2026-11-09 | §12.1, KV3, KV4, KV6, §12.8, §12.9, §12.11; yeni §12.15–§12.19 (V7): sönümlü ReFIT niyet etiketi, BOCPD sensörü (arousal = P(rejim ≠ Day-0)), ölü kanal dedektörü, Degenhart hizalaması, kanal bozulması augmentation'ı; ayar oturumları test oturumlarından ayrı; istatistik birimi oturum, Holm tüm ailede, toparlanma Kaplan–Meier; v1 kodu `v1-final` tag'ine taşındı | KR-049: hakem raporu (sahte tekrar, ayar = test oturumu, D ≈ C, R5 elektrot kaybında üstün, literatür tabanları eksik) ve KR-046/048'deki 31 s tespit gecikmesi. Kullanıcı onayı (2026-11-09) |
 | 2026-11-08 | KV2, KV3, KV4, §12.6, §12.7, §12.9, §12.14: kalıcı sürpriz sensörü (yeniden ölçekleme kapısı); dinamik duygu: arousal (iç hata + başlık uyuşmazlığı, sabit Day-0 tabanı), valens (e_v eğilimi), dominans (e_v düzeyi) → gaz, fren, çapa gevşetme, akış içi çapa konsolidasyonu; yeni regülatörler α_anchor(t), c(t); yeni kontrol v2-P, v2-B ᾱ ile eşlenir, v2-C η, α, c dizilerini karıştırır; v2-E senaryosu tanımlandı | KR-046: kapalı döngü sönüyordu; kalıcı sensör ilk günü korudu. KR-047: Pf ≈ sabit yüksek η (duygu zamanlaması katkısız); valence = −a iken kurallar tek sinyale çöküyordu. Kullanıcı önerisi ve onayı (valens / dominans e_v'den) |
 | 2026-11-08 | KV4, KV6, §12.6, §12.9, §12.14: duygu-kapılı etiketsiz kanal yeniden ölçeklemesi ana sisteme girdi; yeni regülatör λ_norm(t); koşul v2-R. W_in kuralı (§12.13) varsayılan kapalı | KR-045: etiketsiz yeniden ölçekleme günler arası val R² ≈ 0 → ~0,19 ama Day-0'da bedelli; W_in kuralı okuma uyumunu geçmedi (karar kapısı 2). Kullanıcı seçimi |
 | 2026-11-08 | KV1–KV7, §12.1, §12.6, §12.9, §12.13: W_in çevrimiçi, sürpriz-kapılı (η_in = η_in,0·max(0, a)), çapalı ve norm topu sınırlı üç faktörlü yerel kuralla değişebilir; W_rec ve τ donuk. Yeni koşullar v2-W, v2-L; homeostaz hedefi `day0` seçeneği, v2-L'de akan kanal z-skoru | KR-042: günler arası Day-0 modeli ≈ 0, okuma NLMS'i kurtarmıyor (kayma girişte). Kullanıcı önerisi ve onayı (KR-044) |
@@ -458,6 +461,7 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 - Çevrimdışı (surrogate gradyan / BPTT) eğitilen, hızlı/yavaş alt-popülasyonlu bir zamansal omurga; üstünde yalnızca yerel kurallarla çevrimiçi uyum sağlayan okuma blokları.
 - Hedef: NeuroBench Primate Reaching oturum içi test R² ≥ 0,65–0,70. Referans: KR-033 GRU tavanı (20 ms'de Indy 0,736 / Loco 0,685).
 - **Araştırma sorusu (v2):** Beklenmedik sürprizle modüle edilen öğrenme hızı η(t), sürprizle açılan giriş plastisitesi η_in(t) (KR-044) ve hızlı/yavaş alt-popülasyon kapılaması, günler arası kaymada ve elektrot kaybında, aynı ortalama η'lı sabit kuraldan (v2-B) ve zamanlaması karıştırılmış η'dan (v2-C) daha iyi uyum sağlıyor mu?
+- **Araştırma sorusu (V7, KR-049):** Değişim noktası tespitiyle (BOCPD, §12.16) kapılanan girdi uyumu (yeniden ölçekleme, ölü kanal dedektörü, Degenhart hizalaması) ve öğrenme hızı, niyet etiketiyle (sönümlü ReFIT, §12.15), sürekli yeniden ölçeklemeden (R5), eşlenmiş sabit kontrollerden ve zamanlaması karıştırılmış kontrolden daha iyi uyum sağlıyor mu? "Duygu" adları bu bölümde tanımlanan istatistiksel niceliklerin etiketidir: arousal = P(şu anki rejim Day-0 değil); yorum tartışmaya aittir, iddia istatistiksel nicelik üzerinedir.
 
 ### 12.2 v2 değişmez kuralları (KV1–KV8)
 
@@ -474,6 +478,7 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 |---|---|---|
 | **e_v** (sonuç hatası, v1'deki δ) | v(t) − v̂(t) | Çevrimiçi: okuma başlıkları ve (plastisite açıksa) W_in, sabit geri besleme B = okuma ağırlıkları üzerinden (§12.13). Çevrimdışı: omurga + başlıklar (hız kaybı) |
 | **e_cer** (tahmin hatası, v1'deki e) | x̄(t+1) − x̂_smooth(t+1) | Yalnızca W_cer |
+| **e_int** (niyet hatası, V7, §12.15) | y_int(t) − v̂(t); y_int sönümlü ReFIT etiketi (imleç ve hedef konumundan) | Çevrimiçi okuma başlıkları (`online.label_source: refit`'te e_v'nin yerine) |
 - Beyincik kaybı omurgaya gradyan vermez; e_cer W_in'e ulaşmaz. Duygu uzayı e_cer'i yalnızca **okur**, değiştirmez; W_in'e yalnızca η_in(t) üzerinden, adım boyu olarak etki eder.
 - Dinamik duygu (KR-047, §12.6): duygu uzayı e_cer'i (iç yol ve izleme yolu), girdi sapmasını (§12.14), okuma başlıklarının çıktılarını (uyuşmazlık) ve gecikmeli e_v'yi **okur**; hiçbirini eğitmez. Okumaya yalnızca η(t), α_anchor(t), c(t) ve g üzerinden, adım boyu / kazanç olarak etki eder.
 
@@ -487,6 +492,7 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 | α_anchor(t) | Okuma NLMS'inin çapaya çekme adımı (§12.7, KR-047) | [0, α_0 + α_b] | α_0 |
 | c(t) | Akış içi çapanın konsolidasyon adımı: W_anc ← W_anc + λ_c·c·(W − W_anc) (§12.7, KR-047) | [0, 1] | 0 (çapa W_0) |
 - τ, ϑ, W_rec, beyincik adımı ve başka hiçbir hiperparametre regülatörden etkilenmez. β (karar sıcaklığı) regresyonda kullanılmaz.
+- V7'de (KR-049) regülatörleri süren arousal BOCPD'nin a(t) = 1 − P(rejim = Day-0) olasılığıdır (§12.16); aralıklar değişmez. Tonik / fazik iş bölümünde (§12.20, KR-050) α_anchor(t) ve λ_norm(t) tonik arousal'dan (BOCPD), η(t) ve g fazik arousal'dan (plastik beyincik) gelir; aralıklar yine değişmez, η_cer sabittir (regülatör üretmez). Ölü kanal dedektörü (§12.17) ve Degenhart hizalaması (§12.18) regülatör değil, etiketsiz girdi dönüşümüdür; hizalama yalnız a(t) ≥ a_on iken açılır.
 
 **KV5 — Regülatörsüz mod her zaman çalışır.** `regulators.enabled: false` → g_fast = g_slow = 1, η ve η_in sabit (v2-A'da 0, v2-B'de η̄ ve η_in = 0, v2-W'de η̄ ve η̄_in). Ablation için zorunludur ve testlidir.
 
@@ -496,6 +502,9 @@ Bu bölüm spesifikasyonun **kural ve denklem** özetidir; referans kod spesifik
 - Beyincik x̂_smooth(t+1)'i üretirken x(t+1)'i ve x̄(t+1)'i göremez.
 - Prequential sıra: v̂(t) üretilir ve skorlanır; güncelleme ancak sonra e_v(t) ile yapılır.
 - Kodlayıcı istatistikleri (μ_ch, σ_ch) ve tüm ölçekler yalnızca train diliminden hesaplanır. İstisna: §12.14'teki etiketsiz kanal yeniden ölçeklemesi (KR-045) — x_norm'un kanal ortalaması / varyansı akışta nedensel EMA ile izlenir ve girdi Day-0 train ölçeğine döndürülür. Yalnızca geçmiş girdiyi kullanır, etiket kullanmaz; referans (m_0, v_0) Day-0 train'den.
+- V7 istisnaları (KR-049), hepsi etiketsiz, nedensel ve referansları yalnızca Day-0 train'den: BOCPD sensörü (§12.16), ölü kanal dedektörü (§12.17), Degenhart hizalaması (§12.18; yeni günün FA'sı yalnızca akışın geçmiş girdisinden). Sensörün kalibrasyonu (tavlama, hazard) Day-0 train'in ayrılmış son diliminde ve ayar oturumlarında yapılır.
+- Niyet etiketi (§12.15) imleç ve hedef konumunu kullanır: gerçek BCI'da ekranda bilinen görev durumudur. Hız etiketi (y) kullanmaz; hız büyüklüğü dekoderin kendi çıktısından gelir.
+- **Ayar oturumları test oturumlarından ayrıdır (KR-049).** `tune_primates`'teki oturumlar `primates`'te (test) bulunamaz; çakışma hata verir. Day-0 modeli ayar ve testte aynıdır (yalnızca Day-0 train'de eğitilir).
 
 **KV7 — Ateşleme rejimi (k-WTA yerine homeostaz).**
 - v2 omurgasında k-WTA yoktur. Hedef ortalama oran ρ = 0,05 (config `target_rate`).
@@ -601,6 +610,8 @@ W^(k) ← (1 − α_anchor)·W^(k) + α_anchor·W_0^(k) + η(t)·e_v(t)·r̃^(k)
 3. **Aşama 3 — Akış:** test dilimi (oturum içi ya da Day-k) pencerelenmeden adım adım akar (`eval`, gradyan kapalı, `online_homeostasis` config'ten). Geçerli kurallar: KV1, KV2, KV6.
    - **Etiket gecikmesi (KR-041):** y_t okumaya t + d'de ulaşır (`online.label_delay_ms`, varsayılan 500 ms). Güncelleme e = y_{t−d} − v̂_{t−d} ve r_{t−d} ile yapılır. Sebep: 4 ms'de anında etiketle y_{t−1} kopyası bile R² ≈ 0,999 verir, uyum kazancı anlamsızlaşır. Tablolarda gecikmeli kopyalama tabanı (v̂_t = y_{t−d}) raporlanır.
    - **Günler arası model (KR-040):** yalnızca Day-0'da eğitilir (ön-eğitim Day-k train dilimlerini gördüğü için kullanılmaz); Day-k, Day-0 istatistikleriyle kodlanır.
+   - **Etiket kaynağı (V7, KR-049):** `online.label_source: delayed` (KR-041, 500 ms gecikmeli hız) ya da `refit` (§12.15, gecikmesiz sönümlü niyet etiketi). V7'nin varsayılanı `refit`; `delayed` ablasyon olarak raporlanır.
+4. **Kanal bozulması augmentation'ı (V7, KR-049, §12.19):** Aşama 1 ve 2'deki her eğitim penceresine, x_norm alanında rastgele kanal düşürme (kanal "sıfır sayım" değerine çekilir) ve kanal başına kazanç / kayma bozulması uygulanır. Yalnızca eğitimde; val seçimi ve akış bozulmasız veriyle yapılır.
 
 ### 12.9 Değerlendirme koşulları (v2)
 v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
@@ -620,6 +631,25 @@ v1'in A/B/C'siyle karıştırmamak için tablolarda `v2-A` … `v2-E` yazılır.
 - Senaryolar: oturum içi test, Day-0 → Day-k (günler arası) ve elektrot kaybı (v2-E: oturum içi model, değerlendirme diliminin ortasında seed'e bağlı 20 kanalın ham sayımı 0).
 - Metrikler: R² (NeuroBench), kayıp sonrası R² ve toparlanma süresi (E: kayıptan sonraki ilk 5 s'lik pencerenin R²'si ≥ kayıp öncesi pencere medyanı − 0,05), alt-popülasyon ateşleme oranı (KV7), a(t)/v(t)/d(t)/g/η/α izleri.
 - **Ana iddianın kanıtı:** v2-D'nin v2-B, v2-P ve v2-C'den istatistiksel olarak anlamlı biçimde iyi olması (5 seed × oturum, kesin Wilcoxon, Holm). v1'de kapılı η eşlenmiş η'yı geçemedi (KR-031, KR-032); bu yüzden B ve C kontrolleri zorunludur. v2-W V6 dışında: W_in kuralı kapı 2'de okuma uyumunu geçmedi (KR-045).
+
+**V7 koşulları (KR-049).** Hepsi aynı (augmentation'lı) checkpoint'le, `label_source: refit`:
+
+| Kod | İçerik | Ölçtüğü |
+|---|---|---|
+| **A** | Donuk model, η = 0 | Ön-eğitim + augmentation |
+| **B7** | Çapalı NLMS, ReFIT etiketi, eşlenmiş sabit η̄, ᾱ | Yalnız okuma uyumu |
+| **R5** | B7 + sürekli yeniden ölçekleme (τ 5 s) | Basit z-skor tabanı (hakem) |
+| **G7** | B7 + Degenhart hizalaması akış başından açık, BOCPD yok | Literatür hizalama tabanı |
+| **P7** | BOCPD-kapılı yeniden ölçekleme + ölü kanal dedektörü + Degenhart; okumada eşlenmiş sabit η̄, ᾱ | Okuma zamanlamasının katkısı |
+| **C7** | D7'nin η(t), α(t) dizileri zamanda karıştırılmış; girdi tarafı P7 ile aynı | Zamanlama mı, varyans mı |
+| **D7** | P7 + BOCPD arousal'ı → η gazı, çapa gevşetme, g (§12.6 v2-D kuralları, a = a_BOCPD) | Önerilen sistem |
+| D7−dead, D7−align, D7−delay | D7'den ölü kanal dedektörü / hizalama çıkarılmış; ReFIT yerine 500 ms gecikmeli etiket | Bileşen ablasyonları |
+| D7@v6 | D7, V6 checkpoint'iyle (augmentation'sız) | Augmentation'ın katkısı |
+| D7_split | D7 + tonik / fazik iş bölümü (§12.20): BOCPD → α, λ_norm; plastik beyincik (kopya oranı) → η, g | İş bölümünün katkısı |
+| D7_ph0, D7_N0 | D7_split'ten fazik kol çıkarılmış (a_ph = 0) / fazik kol eski normalizasyonla (‖e‖²/ε²_0) | Plastik beyinciğin ve normalizasyonun katkısı |
+| D7@kaynak, D7_split@kaynak | BOCPD öteki kaynakla (ar1 ↔ cer_mon, §12.16) | Beyincik artığının sensöre katkısı |
+
+- **İstatistik (V7, KR-049; hakem raporu):** birim **oturumdur**. Seed'ler önce oturum içinde ortalanır; oturum düzeyinde kesin Wilcoxon (n < 6'da ulaşılabilir en küçük p raporlanır) ve oturum → seed sıralı küme bootstrap'lı %95 güven aralığı. Seed × oturum birimli Wilcoxon yalnızca ek bilgi olarak verilir. Holm iki düzeyde: önceden kayıtlı birincil aile (D7 − P7, D7 − R5, D7 − C7, D7 − B7) ve tüm karşılaştırma ailesi. İkincil (beyincik) aile ayrı Holm'la ve keşifsel olarak raporlanır (KR-050): D7_split − D7_ph0, D7_split − D7_N0, D7@cer_mon − D7@ar1, D7_split − D7. Toparlanma süresi sansürlü veridir: Kaplan–Meier medyanı ve sansürlü birim sayısı raporlanır, ortalama ± std raporlanmaz.
 
 ### 12.10 Spesifikasyon notları ve açık noktalar
 Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt için; v2 kararlarını değiştirmez):
@@ -657,6 +687,12 @@ Spesifikasyonun v1 teşhisi ile depodaki gerçek v1 arasındaki farklar (kayıt 
 | Kalıcı sürpriz sensörü (§12.14) | τ_d 10 s, v_f 1e-2, δ_0 = Day-0 train maks.; τ_fast 5 s; kapı [0,3; 0,6]; τ_calm ∞, τ_surp 5 s; τ_ret 30 s |
 | Dinamik duygu (§12.6, KR-047) | a_mode = sensör; τ_a 5 s, w_u 0,5; valens τ 2 s / 20 s, dominans τ 20 s; ρ_v 0; τ_brake 2 s, τ_cons 5 s, δ_m 0,2 (fren ve konsolidasyon v2-D'de kapalı) |
 | Elektrot kaybı (v2-E) | 20 kanal, değerlendirme diliminin ortası; toparlanma penceresi 5 s, adım 0,5 s, tol 0,05 |
+| Sönümlü ReFIT (§12.15, başlangıç) | r_d 20 mm, r_on 5 mm, tepki süresi 200 ms |
+| BOCPD (§12.16, başlangıç) | blok 200 ms (graph_chunk'ın böleni), hazard 600 s, R_max 512 blok, tek boyutlu skor ε_y 1e-3, Day-0'a dönüş p_0 0,5, kaynak ar1 (karşılaştırma cer_mon), tavlama ızgarası {0,002 … 1} (Day-0 ayrılmış dilimde yanlış alarm ≤ %1), yeni rejim önseli κ 1 / α 1, kalibrasyon payı Day-0 train'in son %20'si, kapı [0,5; 0,9] |
+| Fazik kol (§12.20, başlangıç) | kopya oranı (N1), τ_a 5 s, w_u 0, η_cer ayar ızgarası {1e-4, 3e-4, 1e-3} (başlangıç 3e-4) |
+| Ölü kanal (§12.17) | α_dead 1e-6 |
+| Degenhart (§12.18, başlangıç) | q 10 faktör, FA kutusu 20 ms, T_cal 30 s, yeniden uydurma 30 s, pencere ≤ 300 s, kararlı oran 0,6, 5 iterasyon, a_on 0,5 |
+| Augmentation (§12.19, başlangıç) | p_drop 0,5, k_max = ⌈0,2·C⌉, p_gain 0,5, σ_g 0,2, σ_b 0,2 |
 | Pencere / stride | 500 / 250 adım |
 | Ön-eğitim / ince ayar | 100 / 150 epoch, batch 32, AdamW 1e-3, wd 1e-4 |
 
@@ -721,3 +757,108 @@ m, v ← m, v + λ_ret·(1 − h)·((m_0, v_0) − (m, v))          # sakinken D
 ```
 - Sensör koşulun kendi yeniden ölçeklemesinden bağımsızdır (geri besleme döngüsü yok) ve tüm dinamik duygu koşulları için ortaktır.
 - Ölü kanalda (elektrot kaybı) v → 0 olur ve x' kanalın Day-0 ortalamasına iner (sonlu; test edildi).
+
+### 12.15 Sönümlü ReFIT niyet etiketi (V7, KR-049)
+Gecikmeli hız etiketinin (KR-041) iki sorunu var: gecikmeli LMS'in kararlı adım sınırı gecikmeyle küçülür (η ≈ 3·η_0'da ıraksama), ve gerçek bir BCI'da el hızı etiketi yoktur. ReFIT (Gilja vd. 2012) ve retrospektif hedef çıkarımı (Jarosiewicz vd. 2015) bunun yerine kullanıcının niyetini etiket sayar: imleç hedefe gitmek istiyordu. Her akış adımında:
+```
+p(t), g(t)   = imleç ve hedef konumu (mm; .mat'taki cursor_pos, target_pos, aynı 4 ms ızgarası)   [2]
+Δ(t)         = g(t) − p(t);   ρ(t) = ‖Δ(t)‖
+û(t)         = Δ(t) / (ρ(t) + ε)
+σ(t)         = 1 − exp(−ρ(t) / r_d)                            # sönüm: hedefe yaklaştıkça hız → 0
+s(t)         = ‖v̂_fiz(t)‖                                       # dekoderin kendi hız büyüklüğü (fiziksel birim)
+y_int,fiz(t) = 0                     ρ(t) ≤ r_on (hedefte)
+             = σ(t)·s(t)·û(t)        aksi halde
+y_int(t)     = (y_int,fiz(t) − μ_y) / σ_y                       # standart ölçek (train istatistikleri)
+m_int(t)     = 0  hedef değişiminden sonraki ilk t_rt boyunca (tepki süresi), aksi halde 1
+e_int(t)     = m_int(t)·(y_int(t) − v̂(t))
+```
+- Prequential: v̂(t) önce skorlanır, sonra e_int(t) ile güncellenir; gecikme d = 0, halka tampon yok.
+- Sızıntı yok: y_int hız etiketini (y) kullanmaz. Yönü görev durumundan (p, g), büyüklüğü dekoderden gelir. Tanı olarak etiket kalitesi raporlanır: R²(σ·‖y‖·û, y), yani gerçek hız büyüklüğüyle oluşturulmuş niyet etiketinin hıza benzerliği.
+- ReFIT hız büyüklüğünü öğretmez; yalnızca yönü düzeltir. Sönüm, hedefe yaklaşırken yavaşlamayı öğretir.
+- Parametreler `refit.*` (r_d, r_on, t_rt, ε) YAML'dan, yalnız ayar oturumlarında.
+
+### 12.16 BOCPD değişim noktası sensörü (V7, KR-049; tek boyutlu skor ve Day-0'a dönüş KR-050)
+Kalıcı sürpriz sensörünün (§12.14) EMA'ları kanıtı biriktirmek yerine unutuyor; eşik δ_0 keyfî bir tolerans zarfı (Indy 0131'de 31 s gecikme). Yerine Bayesçi çevrimiçi değişim noktası tespiti (Adams & MacKay 2007), bir kaynak sinyalinin blok ortalamalarından türeyen **tek boyutlu skor** üzerinde:
+```
+v(t)    kaynak [C]:  x       → x_norm(t)
+                     ar1     → x_norm(t)                  (dönüşüm blok düzeyinde, aşağıda)
+                     cer_mon → x̄(t) − W_b·φ_mon(t−1)      (donuk Day-0 beyincik artığı, izleme yolu: koşul 0 = donuk A)
+o_k     = (1/B)·Σ_{t∈blok k} v(t)                                    # B = block_ms/Δt adım   [C]
+z_k,c   = (o_k,c − m_c) / s_c                                         # x, cer_mon
+z_k,c   = ((o_k,c − m_c) − ρ_c·(o_{k−1},c − m_c)) / s_c               # ar1: kanal başına AR(1) yeniliği
+y_k     = ln( Σ_c canlı_c·z²_k,c / Σ_c canlı_c + ε_y )                # tek boyutlu skor
+Day-0 rejimi D: y_k ~ N(m_y, s²_y)
+Yeni rejim r:   y_k ~ Normal-Gamma(μ_r, κ_r, α_r, β_r) → Student-t;  önsel μ = m_y, κ = κ_new, α = α_new, β = α_new·s²_y
+log ℓ   = τ_T · log p(y_k)                                            # τ_T: tavlama
+Z       = π_D·ℓ_D + Σ_r π_r·ℓ_r
+π'_D    = π_D·ℓ_D·(1 − H) + H·p_0·Z                                   # Day-0 sürüyor ya da değişimden sonra Day-0'a dönülüyor
+π'_{r+1}= π_r·ℓ_r·(1 − H)                                             # yeni rejim sürüyor (r = 0 … R_max − 2; sonuncu birikir)
+π'_0    = H·(1 − p_0)·Z                                               # yeni rejim başlıyor;  H = B·Δt / hazard
+π       ← π' / Σπ'
+a(t)    = 1 − π_D                                                     # arousal: P(şu anki segment Day-0 rejiminde değil) ∈ [0, 1]
+n(t)    = Σ_{r < r_new} π_r                                           # son r_new blokta değişim olasılığı (loglanır)
+```
+- **Neden tek boyut ve dönüş (KR-050):** İlk biçimde (kanal başına bağımsız Gauss, dönüşsüz Day-0) Day-0 train'in ayrılmış diliminde yanlış alarm her τ_T'de %90–97'ydi. İki sebep: (i) 96–192 kanalın olabilirlikleri bağımsız sayılıp çarpıldığı için kanallardaki küçük ortak sapmalar sınırsız kanıt biriktiriyordu; (ii) değişim noktası her zaman *yeni* rejim açtığı için π_D yalnızca azalabiliyordu: tek bir geçici davranış patlaması a'yı kalıcı olarak yükseltiyordu ve hazard tek başına 600 s'de a'yı ~0,63'e taşıyordu. Kanal başına önce beyazlatma (AR(1), beyincik artığı) ya da unutmalı simetrik Day-0 rejimi bunu çözmedi; tek boyutlu skor + dönüş (p_0) her kaynakta kalibre oldu (teşhis: `scripts/diagnose_cer_bocpd.py`, `scripts/diagnose_bocpd_models.py`).
+- a(t) artık "şu anki segment Day-0 değil" olasılığıdır; geçici sapmadan sonra geri inebilir. Day-k'de Day-0 rejimi skoru açıklayamadıkça a yüksek kalır. p_0 = 0 ilk (dönüşsüz) biçimdir.
+- Ölü sayılan kanallar (§12.17) skordan çıkarılır (canlı_c = 0).
+- **Referans (yalnız Day-0 train, KV6):** x ve ar1'de m, s (ve ρ) Day-0 train'in ilk %80'inin blok ortalamalarından. cer_mon'da W_b, Day-0 train başındaki [başlangıç + burn-in, + fit_steps) dilimde ridge'le uydurulur (çevrimiçi beyinciğin W_0'ından ayrı: onun train sonu ridge'i kalibrasyon dilimiyle örtüşür), m, s artığın bu dilimden sonra ilk %80'e kadarki kısmından. m_y, s²_y aynı dilimin skorlarından. τ_T, train'in son %20'sinde yanlış alarm (a > 0,5 blok oranı) ≤ `bocpd.calib_false_alarm` olacak en büyük ızgara değeri.
+- **Kaynak seçimi:** ar1 (beyinciksiz beyazlatma) ve cer_mon (beyincik artığı) ayar oturumlarında yan yana koşar (D7, D7_split ve kaynak geçişi). Önceden kayıtlı kural: D7'nin ayar oturumlarındaki Day-k R² ortalaması yüksek olan; fark < 0,005 ise Day-0 val yanlış alarmı düşük olan. Teşhiste (tek seed) cer_mon tespiti ~2× hızlandırdı, Day-0 val yanlış alarmı %2,4 / %5,4 (ar1: %0 / %0,5).
+- a(t) blok sınırında güncellenir ve sonraki bloğun adımlarında kullanılır (nedensel). Kapı h = clamp((a − lo)/(hi − lo), 0, 1); λ_norm = λ_calm + (λ_surp − λ_calm)·h; Day-0'a dönüş (τ_ret) §12.14'teki gibi.
+- Parametreler `bocpd.*` YAML'dan.
+
+### 12.17 Ölü kanal dedektörü (V7, KR-049)
+Day-0 train'de kanalın 4 ms'lik kutuda spike olasılığı p_c. Kanalın son spike'ından beri geçen kutu sayısı z_c(t):
+```
+ölü_c(t) = [ z_c(t)·(−ln(1 − p_c)) ≥ −ln α_dead ]                 # Poisson: z_c kutu sessizliğin olasılığı < α_dead
+x'_c(t)  = m_0,c        ölü_c(t)                                  # nötr: Day-0 train ortalaması
+         = x'_c(t)      aksi halde (yeniden ölçeklenmiş / hizalanmış)
+```
+- Spike gelince kanal hemen geri açılır. Hiç ateşlemeyen kanal (p_c = 0) değerlendirilmez.
+- "Sıfır sayım" x_norm = normalize(0)_c ile tanınır (kodlayıcı deterministik); ham sayım gerekmez.
+- Ölü kanalın yeniden ölçekleme istatistikleri (m, v) güncellenmez; Degenhart hizalamasında kararsız sayılır ve yeniden kurulur.
+
+### 12.18 Degenhart hizalaması (V7, KR-049)
+Degenhart vd. (2020) kararlı gizil uzay hizalaması, kanal uzayına döndürülmüş biçimde (omurga x_norm görür):
+```
+Day-0:  FA(x_kutu; q) → Λ_0 [C, q], μ_0 [C], Ψ_0 [C]             # Day-0 train, fa_bin_ms'lik kutu ortalamaları
+Yeni gün (a(t) ≥ a_on olduktan sonra, akışın geçmiş girdisinden):
+        FA(son ≤ T_win s; q) → Λ_k, μ_k, Ψ_k                      # T_cal s birikince ilk uydurma, her T_refit s'de yeniden
+        S ← tüm canlı kanallar; n_iter kez:
+            O = argmin_{OᵀO=I} ‖Λ_0[S] − Λ_k[S]·O‖_F               # Procrustes (SVD)
+            d_c = ‖Λ_0[c] − Λ_k[c]·O‖;   S ← en küçük d'li ⌈f_s·C_canlı⌉ kanal
+        M_k = Λ_kᵀ (Λ_kΛ_kᵀ + Ψ_k)⁻¹                              # E[z | x] (gizil, yeni gün koordinatı)  [q, C]
+        x̂_0(t) = μ_0 + Λ_0·Oᵀ·M_k·(x_norm(t) − μ_k)               # Day-0 kanal uzayında yeniden kurulum    [C]
+x'_c(t) = yeniden ölçeklenmiş x_c(t)    c ∈ S (kararlı)
+        = x̂_0,c(t)                      c ∉ S ya da ölü
+```
+- Hizalama hazır olana kadar (T_cal dolmadan) ve a(t) < a_on iken tüm kanallar yeniden ölçekleme yolundan geçer.
+- FA, EM ile (`align.em_iters`) uydurulur; yalnızca geçmiş girdi, etiket yok.
+- Risk: yeniden kurulan kanallar yalnız ortak bileşeni taşır (özel varyans yok); omurga eğitimde böyle kanal görmedi. Augmentation (§12.19) bunu kısmen karşılar. NoMAD (Karpowicz vd. 2025) V7 çıkış kriteri karşılanmazsa sonraki adımdır; şimdi yazılmaz.
+
+### 12.19 Kanal bozulması augmentation'ı (V7, KR-049)
+Sussillo vd. (2016) esinli; Aşama 1–2'de her pencere için (x_norm alanında, GPU'da, CUDA Graph'ın dışında):
+```
+olasılık p_drop:  k ~ U{1, …, k_max} rastgele kanal → x_c(t) = z0_c (sıfır sayımın x_norm'u), tüm pencere boyunca
+olasılık p_gain:  x_c(t) ← clip·tanh((x_c(t)·(1 + σ_g·ξ_c) + σ_b·ζ_c) / clip),   ξ, ζ ~ N(0, 1) kanal başına
+```
+- Rastgelelik eğitim seed'inden; val seçimi ve akış bozulmasız veriyle. Parametreler `augment.*` YAML'dan; `augment.enabled: false` V6 davranışıdır.
+
+### 12.20 Tonik / fazik iş bölümü (V7, KR-050)
+İki "değişim" sinyali farklı soruları cevaplar ve farklı düğmeleri yönetir:
+```
+Tonik   a_ton(t) = a_BOCPD(t)                                  # §12.16: "Day-0 rejiminde değiliz" (kalıcı)
+Fazik   e(t)  = x̄'(t) − x̂(t)                                   # plastik beyincik (§12.5, η_cer > 0); x̄': koşulun yeniden ölçeklenmiş girdisi
+        N(t)  = EMA_{λ_a} mean_c e_c(t)²
+        K(t)  = EMA_{λ_a} mean_c (x̄'_c(t) − x̄'_c(t−1))²        # "son değeri tekrarla" tahmininin hatası
+        s_ph  = (N / K) / r_0                                   # r_0: Day-0 ayrılmış dilimde donuk beyincikle ort. e² / ort. Δx̄²
+        ū     = EMA_{λ_a} u                                     # başlık uyuşmazlığı / u_0 (§12.6)
+        a_ph  = tanh((1 − w_u)·s_ph + w_u·ū − 1)                # "şu an hâlâ beklenmedik bir şey oluyor" (beyincik alıştıkça söner)
+Yönlendirme (a_mode = split):
+        η(t), g_fast ← a_ph:   η = η_0·(1 + α_η·a_ph⁺)·(1 − ρ_v·v⁺)·(1 − b),   g_fast = 1 + α_gate·a_ph
+        α(t), λ_norm ← a_ton:  α = α_0·(1 − a_ton⁺·d⁻) + α_b·b,   h = clamp((a_ton − lo)/(hi − lo), 0, 1)
+```
+- **Gerekçe:** Çapayı gevşetmek ve girdiyi yeniden ölçeklemek pahalı ve kalıcı kararlardır; kalibre ve kalıcı kanıta (BOCPD) bağlanır. Öğrenme hızını kısa süre artırmak ucuz ve geri alınabilir; hızlı tepki veren ve uyum sağladıkça sönen beyincik sürprizine bağlanır.
+- **Normalizasyon (KR-050):** §12.6'daki s_int = mean e²/ε²_0 mutlak büyüklüktür. Indy'nin sonraki günlerinde ateşleme düşer (ortalama sayım 0,084 → 0,037), Day-0 ölçeğiyle kodlanan girdi ve onunla beyincik hatası küçülür; sürpriz yeni günde *azalır* (KR-047: iç arousal Day-k'de a⁺ 0,00, Day-0'da 0,18 — bu yüzden V6'da elenmişti). Kopya tahminine oran ölçekten bağımsızdır: beyincik "son değeri tekrarla"dan ne kadar iyi tahmin ediyor. Teşhiste (`scripts/diagnose_phasic.py`, ayar oturumları) oran, donuk beyincikle Indy Day-k başında a⁺ 0,24–0,59 verdi (eski: 0); plastik beyincikle (η_cer 1e-3) Day-0 a⁺ ≈ 0 ve Loco'da Day-k başı 0,34–0,39'dan sonu 0,06–0,13'e söndü. Girdinin yerel enerjisine ya da kanal varyansına bölmek Day-0'da yanlış sürpriz verdi.
+- Beyincik yalnız e_cer ile güncellenir (KV3); η_cer sabittir, regülatör üretmez (KV4). Aralıklar §12.2'deki gibi. `regulators.enabled: false` her zaman çalışır (KV5).
+- a_mode = sensor (V6/V7 D7) ve internal / max biçimleri korunur; split yalnız yeni koşullarda (D7_split, D7_ph0, D7_N0). r_0, Day-0 tabanlarıyla (u_0, q_0) aynı dilimde ölçülür.
+- Parametreler `v7.phasic.*` ve `v7.cer_family` YAML'dan.

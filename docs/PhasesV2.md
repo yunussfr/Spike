@@ -5,7 +5,7 @@ Bu dosya, `docs/spike_v2_mimari_spesifikasyon.md`'deki **Spike v2** mimarisinin 
 Kurallar:
 - Bir fazın **çıkış kriteri** sağlanmadan sonraki faza geçilmez.
 - Tüm v2 kodu `ARCHITECTURE.md` §12'deki v2 kurallarına (**KV1–KV8**) uyar. Çelişki varsa önce ARCHITECTURE.md güncellenir (kullanıcı onayıyla), sonra kod.
-- Her fazın sonunda: sonuç bu dosyaya (faz başlığının altına `> Sonuç:` satırı), karar `docs/Desicion.md`'ye (KR-xxx), kısa günlük `docs/State.md`'ye yazılır.
+- Her fazın sonunda: sonuç bu dosyaya (faz başlığının altına `> Sonuç:` satırı), karar `docs/Decision.md`'ye (KR-xxx), kısa günlük `docs/State.md`'ye yazılır.
 - Ayar yalnızca ayar seed'leri (100–102) ve val bölmesinde yapılır. Rapor seed'leri (0–4) ve test bölmesi her faz için bir kez koşulur.
 - Spesifikasyondaki sayılar (Δt = 4 ms, 100/150 epoch, α_gate = 0,25 …) **başlangıç değeridir**; ölçüm başka bir değer gösterirse KR kaydıyla değiştirilir.
 
@@ -186,6 +186,36 @@ Kurallar:
 
 ---
 
+## Faz V7 — Değişim noktası tespitiyle kapılanan girdi uyumu ve sönümlü ReFIT (KR-049)  ⏳ Kod hazır, koşu bekliyor
+
+**Hedef:** Hakem raporuna (2026-11-09) cevap: (1) istatistik birimi oturum, (2) ayar oturumları test dışı, (3) "duygu" yerine tanımlı istatistiksel nicelik (BOCPD: a = P(rejim ≠ Day-0)), (4) literatür tabanları (Degenhart, R5), (5) gecikmeli LMS sınırını kaldıran niyet etiketi. Araştırma sorusu §12.1 (V7).
+
+**Yapılanlar (kod, 2026-11-09):**
+- §12.15 `src/v2/intent.py` (sönümlü ReFIT; `.mat`'tan imleç / hedef konumu, `load_task_state`), §12.16 `src/v2/changepoint.py` (BOCPD, Day-0 ayrılmış diliminde tavlama kalibrasyonu), §12.17 `src/v2/dead_channel.py`, §12.18 `src/v2/align.py` (FA + Procrustes + kararlı kanallar, graf dışında yeniden uydurma), §12.19 `src/v2/augment.py` (eğitim döngüsünde).
+- Akışa bağlama: `Condition.sensor / dead / align`, `V7Inputs` (`src/v2/stream_spec.py`); `online_v5.py` bölündü (`drift.py`, `stream_spec.py`).
+- Ayar / test ayrımı: `tune_primates`, `data.tune_files` (6 test dışı oturum), `check_tune_disjoint`; `scripts/download_primate.py --only tune`.
+- İstatistik: `src/v2/stats.py` (oturum ortalaması, küme bootstrap, Kaplan–Meier, ulaşılabilir en küçük p); `scripts/make_tables_v2.py` oturum birimli; V6 yeniden tablolandı: `results/v6/table.md`.
+- Deney: `experiments/v2_v7.py` (`configs/v2_v7.yaml`), ön-eğitim `configs/v2_pretrain_v7.yaml`.
+- Testler: `tests/v2/test_v7.py` (20), augmentation ve ayar / test ayrımı testleri; v1 kodu `v1-final` tag'ine taşındı.
+
+**Ek (KR-050, 2026-11-10):** Teşhiste ilk BOCPD Day-0'da %90–97 yanlış alarm verdi. §12.16 tek boyutlu skor + Day-0'a dönüş (CR); kaynak `bocpd.source` (ar1 ana, cer_mon = donuk beyincik artığı karşılaştırma). Yeni §12.20 tonik / fazik iş bölümü: BOCPD → α, λ_norm; plastik beyincik (hatanın kopya tahminine oranı) → η, g. Beyincik ailesi D7_split, D7_ph0, D7_N0 ve geçiş 5 (D7@cer_mon, D7_split@cer_mon) ikincil, keşifsel aile. Teşhis betikleri `scripts/diagnose_{cer_bocpd,bocpd_models,bocpd_cr,phasic}.py`. Ayar zinciri `runs/chain_v7_tune.sh`, Colab rapor eğitimi `notebooks/`.
+
+**Yapılacaklar (koşu):**
+1. Ayar oturumlarını indir: `uv run python scripts/download_primate.py --config configs/v2_base.yaml --only tune`.
+2. Augmentation'lı V3 protokolü (ayar seed'leri, sonra rapor seed'leri): `experiments/v2_pretrain.py --config configs/v2_pretrain_v7.yaml`, primat × seed ayrı süreç (KR-043).
+3. Ayar: `experiments/v2_v7.py --protocol tune --split val` (ayar seed'leri). Seçilecekler: r_d, r_on, t_rt; BOCPD hazard, kapı, p_0 ve kaynak (önceden kayıtlı kural, §12.16); η_cer (fazik kol); hizalama q, stable_frac, T_cal; η_0. Test oturumlarına dokunulmaz.
+4. Rapor: `--protocol test --split test` (seed 0–4), `--runs_v6` ile D7@v6. Tablolar: `scripts/make_tables_v2.py --main D7 --claims B7 P7 C7 R5 --extra G7 D7_nodead D7_noalign D7_delay D7@v6 A --title "Faz V7" --export results/v7`.
+
+**Testler:** ReFIT etiketi y'yi okumuyor ve prequential; BOCPD olasılıkları normalize, maske / ölü kanal dışlama, sabit veride sakin, kaymada birkaç blokta tespit; ölü kanal dedektörü nedensel; FA + Procrustes sentetik dönmeyi ve kararsız kanalları buluyor; hizalayıcı nedensel ve kapılı; CUDA Graph = adım adım (BOCPD + ölü kanal + hizalama + ReFIT birlikte); augmentation yalnız eğitimde, kapalıyken V6 ile aynı.
+
+**Çıkış kriteri:**
+- Ayar yalnız ayar oturumlarında yapılmış; test koşusu bir kez, seçilen değerlerle.
+- Birincil aile (D7 − B7, D7 − P7, D7 − C7, D7 − R5) oturum birimli raporlanmış (4 Day-k oturumunda ulaşılabilir en küçük p 0,125 açıkça yazılı). Yeterli oturum yoksa sonuç "etki büyüklüğü + %95 GA" olarak raporlanır, anlamlılık iddiası yapılmaz.
+- Tespit gecikmesi (Indy 0131 Day-k'de a ≥ 0,5 anı) ve elektrot kaybında D7 − R5 raporlanmış.
+- **NoMAD kararı:** D7, Indy 0630'da (kanal kimliği kayması) G7 / R5'ten iyi değilse ya da Day-k ortalaması R5'i geçmiyorsa, sonraki adım NoMAD tipi dinamik hizalamadır (ayrı faz, ayrı KR).
+
+---
+
 ## Faz özeti
 
 | Faz | Ana çıktı | Koşul |
@@ -197,3 +227,4 @@ Kurallar:
 | V4 | Çapalı NLMS akışı | B |
 | V5 | Beyincik v2 + duygu v2 + duygu-kapılı W_in, kalıcı sürpriz sensörü, dinamik duygu | C, D, W, L, R, P |
 | V6 | Kayma ve elektrot kaybı deneyi | A, B, P, C, D, E (+ Bg, Pg) |
+| V7 | BOCPD sensörü (CR), ölü kanal, Degenhart, sönümlü ReFIT, augmentation, tonik / fazik iş bölümü; oturum birimli istatistik, test dışı ayar | A, B7, R5, G7, P7, C7, D7 (+ ablasyonlar, beyincik ailesi) |
