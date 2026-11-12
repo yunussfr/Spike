@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from experiments.common import r2_columns
+from src.v2.metrics import r2_columns
 from experiments.v2_v6 import Ctx, drop_channels, recovery, rolling_r2
 from src.data.primate import Session
 from src.utils.config import load_config

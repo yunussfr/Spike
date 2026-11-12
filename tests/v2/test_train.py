@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from experiments.common import r2_columns
+from src.v2.metrics import r2_columns
 from src.data.primate import Session
 from src.utils.config import load_config
 from src.v2.model import V2Model

@@ -2,7 +2,7 @@
 
 Aynı NeuroBench 80/10/10 bölmesi (KR-035), tahmin ve skor her 4 ms adımında, test R² (NeuroBench `R2`):
   wiener — son K kutunun (her biri `block_ms` genişliğinde) nedensel spike toplamları üzerinde ridge. Deterministik.
-  gru    — ham sayımlar üzerinde BPTT ile eğitilen GRU (experiments/ceiling.py ile aynı model). 5 seed.
+  gru    — ham sayımlar üzerinde BPTT ile eğitilen GRU (experiments/v2_baselines.py). 5 seed.
 Bu sayılar v2'nin (PhasesV2.md V2–V3) hedef referansıdır. Tüm seçimler val'de; test yalnızca raporlanır.
 
 Kullanım:
@@ -21,8 +21,8 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from experiments.ceiling import gru  # noqa: E402
-from experiments.common import r2_neurobench  # noqa: E402
+from experiments.v2_baselines import gru  # noqa: E402
+from src.v2.metrics import r2_neurobench  # noqa: E402
 from src.data.primate import Session  # noqa: E402
 from src.utils.config import apply_overrides, load_config, resolve_device  # noqa: E402
 from src.utils.logging import RunLogger  # noqa: E402
@@ -152,7 +152,7 @@ def main() -> None:
     device = resolve_device(cfg["experiment"]["device"])
     logger = RunLogger(cfg, seeds, a.config)
 
-    # experiments/ceiling.py'nin GRU'su adım cinsinden `chunk` okur; süre → adım çevrilir.
+    # experiments/v2_baselines.py GRU.su adım cinsinden `chunk` okur; süre → adım çevrilir.
     gcfg = copy.deepcopy(cfg)
     gcfg["ceiling"]["gru"]["chunk"] = ms_to_steps(cfg["ceiling"]["gru"]["chunk_ms"], dt)
 

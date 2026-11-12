@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from experiments.common import r2_neurobench  # noqa: E402
+from src.v2.metrics import r2_neurobench  # noqa: E402
 from src.utils.config import apply_overrides, load_config, resolve_device  # noqa: E402
 from src.utils.logging import RunLogger  # noqa: E402
 from src.utils.seeding import set_seed  # noqa: E402
